@@ -1,7 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState, type FormEvent } from "react";
-import { useAnonymousAuth } from "../hooks/useAnonymousAuth";
 import {
   subscribeItems,
   addItem,
@@ -10,10 +9,16 @@ import {
   type ItemContent,
   type ItemType,
   type ProgramItem,
-} from "../lib/programs";
-import { parseBulletin, type ParsedItem } from "../lib/ai-import.functions";
+} from "@/lib/programs";
+import { parseBulletin, type ParsedItem } from "@/lib/ai-import.functions";
+import {
+  getMyRole,
+  claimCoordinatorIfFirst,
+  type AppRole,
+} from "@/lib/auth.functions";
+import { supabase } from "@/integrations/supabase/client";
 
-export const Route = createFileRoute("/admin")({
+export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
     meta: [
       { title: "Admin — Live Program" },
@@ -30,7 +35,100 @@ const TYPE_LABEL: Record<ItemType, string> = {
 };
 
 function AdminPage() {
-  const { user, loading } = useAnonymousAuth();
+  const navigate = useNavigate();
+  const fetchMyRole = useServerFn(getMyRole);
+  const claimCoordinator = useServerFn(claimCoordinatorIfFirst);
+
+  const [role, setRole] = useState<AppRole | null | "loading">("loading");
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [claiming, setClaiming] = useState(false);
+
+  const loadRole = async () => {
+    try {
+      const { role } = await fetchMyRole();
+      setRole(role);
+    } catch (e) {
+      console.error(e);
+      setRole(null);
+    }
+  };
+
+  useEffect(() => {
+    void loadRole();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    navigate({ to: "/auth", replace: true });
+  };
+
+  const handleClaim = async () => {
+    setClaiming(true);
+    setClaimError(null);
+    try {
+      const { claimed } = await claimCoordinator();
+      if (claimed) {
+        await loadRole();
+      } else {
+        setClaimError(
+          "A coordinator already exists. Ask them to grant you access.",
+        );
+      }
+    } catch (e) {
+      setClaimError((e as Error).message);
+    } finally {
+      setClaiming(false);
+    }
+  };
+
+  if (role === "loading") {
+    return (
+      <div className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">
+        Loading…
+      </div>
+    );
+  }
+
+  if (role !== "coordinator") {
+    return (
+      <div className="min-h-screen bg-background text-foreground">
+        <div className="mx-auto max-w-md px-6 py-16 text-center">
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Coordinator access required
+          </h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Only event coordinators can manage the program.
+          </p>
+          <div className="mt-6 space-y-3">
+            <button
+              onClick={handleClaim}
+              disabled={claiming}
+              className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {claiming ? "…" : "Become the first coordinator"}
+            </button>
+            <button
+              onClick={handleSignOut}
+              className="w-full rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
+            >
+              Sign out
+            </button>
+          </div>
+          {claimError && (
+            <div className="mt-4 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {claimError}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return <CoordinatorView onSignOut={handleSignOut} />;
+}
+
+function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
   const [items, setItems] = useState<ProgramItem[]>([]);
   const [itemType, setItemType] = useState<ItemType>("announcement");
   const [title, setTitle] = useState("");
@@ -102,14 +200,15 @@ function AdminPage() {
           <h1 className="text-3xl font-semibold tracking-tight">
             Event Coordinator
           </h1>
-          <div className="text-xs text-muted-foreground">
-            {loading ? "…" : user ? `UID ${user.uid.slice(0, 6)}` : "offline"}
-          </div>
+          <button
+            onClick={onSignOut}
+            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            Sign out
+          </button>
         </div>
 
         <SmartImport />
-
-
 
         <form
           onSubmit={handleAdd}
@@ -289,7 +388,9 @@ function StatusBadge({ status }: { status: ProgramItem["status"] }) {
         ? "bg-muted text-muted-foreground"
         : "bg-accent text-accent-foreground";
   return (
-    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${styles}`}>
+    <span
+      className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${styles}`}
+    >
       {status}
     </span>
   );
@@ -479,15 +580,6 @@ function SmartImport() {
               </button>
             )}
           </div>
-
-          {loading && (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md bg-background/60 backdrop-blur-sm">
-              <div className="flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm shadow-sm">
-                <Spinner />
-                Reading your bulletin…
-              </div>
-            </div>
-          )}
         </div>
       )}
     </section>
