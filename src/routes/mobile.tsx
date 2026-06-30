@@ -9,6 +9,8 @@ import {
   type ProgramItem,
   type SongContent,
   type SpeakerContent,
+  visibleAnnouncements,
+  visibleUpcomingItems,
 } from "../lib/programs";
 
 export const Route = createFileRoute("/mobile")({
@@ -30,9 +32,15 @@ const TYPE_LABEL: Record<ItemType, string> = {
 function MobilePage() {
   const [programs, setPrograms] = useState<Program[]>([]);
   const [items, setItems] = useState<ProgramItem[]>([]);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => subscribePrograms(setPrograms), []);
   const active = useMemo(() => programs.find((p) => p.isActive), [programs]);
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (!active) {
@@ -44,15 +52,12 @@ function MobilePage() {
 
   const live = useMemo(() => items.find((i) => i.status === "live"), [items]);
   const upcoming = useMemo(
-    () => items.filter((i) => i.status === "upcoming"),
-    [items],
+    () => visibleUpcomingItems(items, now),
+    [items, now],
   );
   const announcements = useMemo(
-    () =>
-      items
-        .filter((i) => i.itemType === "announcement")
-        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
-    [items],
+    () => visibleAnnouncements(items, now),
+    [items, now],
   );
 
   return (
@@ -114,7 +119,7 @@ function MobilePage() {
           ) : (
             <ul className="mt-4 space-y-3">
               {announcements.map((item) => (
-                <AnnouncementCard key={item.id} item={item} />
+                <AnnouncementCard key={item.id} item={item} now={now} />
               ))}
             </ul>
           )}
@@ -124,13 +129,26 @@ function MobilePage() {
   );
 }
 
-function AnnouncementCard({ item }: { item: ProgramItem }) {
+function AnnouncementCard({
+  item,
+  now,
+}: {
+  item: ProgramItem;
+  now: number;
+}) {
   const c = (item.content ?? {}) as Partial<AnnouncementContent>;
   return (
     <li className="rounded-2xl border border-border bg-card p-4 shadow-sm">
       <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-        <span>{TYPE_LABEL.announcement}</span>
-        <span>{relativeTime(item.createdAt)}</span>
+        <div className="flex items-center gap-2">
+          <span>{TYPE_LABEL.announcement}</span>
+          {item.isPinned && (
+            <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-amber-700">
+              pinned
+            </span>
+          )}
+        </div>
+        <span>{relativeTime(item.publishedAt ?? item.createdAt, now)}</span>
       </div>
       <div className="mt-1 text-base font-semibold text-card-foreground">
         {item.title}
@@ -144,8 +162,8 @@ function AnnouncementCard({ item }: { item: ProgramItem }) {
   );
 }
 
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+function relativeTime(iso: string, now: number): string {
+  const diff = now - new Date(iso).getTime();
   const m = Math.floor(diff / 60_000);
   if (m < 1) return "just now";
   if (m < 60) return `${m}m ago`;
