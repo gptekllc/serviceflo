@@ -1,6 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { subscribeItems, type ProgramItem } from "../lib/programs";
+import {
+  subscribeItems,
+  subscribePrograms,
+  type Program,
+  type ProgramItem,
+} from "../lib/programs";
 
 export const Route = createFileRoute("/screen")({
   head: () => ({
@@ -13,9 +18,20 @@ export const Route = createFileRoute("/screen")({
 });
 
 function ScreenPage() {
+  const [programs, setPrograms] = useState<Program[]>([]);
   const [items, setItems] = useState<ProgramItem[]>([]);
 
-  useEffect(() => subscribeItems(setItems), []);
+  useEffect(() => subscribePrograms(setPrograms), []);
+
+  const active = useMemo(() => programs.find((p) => p.isActive), [programs]);
+
+  useEffect(() => {
+    if (!active) {
+      setItems([]);
+      return;
+    }
+    return subscribeItems(setItems, active.id);
+  }, [active]);
 
   const live = useMemo(() => items.find((i) => i.status === "live"), [items]);
   const upcoming = useMemo(
@@ -35,9 +51,7 @@ function ScreenPage() {
             <h1 className="mt-8 text-6xl font-semibold leading-[1.05] tracking-tight sm:text-8xl lg:text-[10rem]">
               {live.title}
             </h1>
-            <div className="mt-8 text-lg text-white/50 sm:text-xl">
-              {live.duration} minutes
-            </div>
+            <CountdownTimer item={live} />
           </>
         ) : (
           <>
@@ -45,7 +59,7 @@ function ScreenPage() {
               Standby
             </div>
             <h1 className="mt-6 text-5xl font-semibold tracking-tight text-white/70 sm:text-7xl">
-              Program starting soon
+              {active ? "Program starting soon" : "No active program"}
             </h1>
           </>
         )}
@@ -82,4 +96,44 @@ function ScreenPage() {
       )}
     </div>
   );
+}
+
+function CountdownTimer({ item }: { item: ProgramItem }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!item.liveStartedAt || item.duration <= 0) {
+    return (
+      <div className="mt-8 text-lg text-white/50 sm:text-xl">
+        {item.duration} minutes
+      </div>
+    );
+  }
+
+  const startedAt = new Date(item.liveStartedAt).getTime();
+  const totalMs = item.duration * 60_000;
+  const remainingMs = Math.max(0, startedAt + totalMs - now);
+  const elapsedMs = now - startedAt;
+  const overrun = startedAt + totalMs < now;
+
+  const display = formatMs(overrun ? elapsedMs - totalMs : remainingMs);
+  const color = overrun ? "text-red-400" : remainingMs < 60_000 ? "text-amber-300" : "text-white/60";
+
+  return (
+    <div className={`mt-8 font-mono text-4xl tabular-nums sm:text-5xl ${color}`}>
+      {overrun ? "+" : ""}
+      {display}
+    </div>
+  );
+}
+
+function formatMs(ms: number): string {
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
