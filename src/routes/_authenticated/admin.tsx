@@ -85,9 +85,28 @@ function AdminPage() {
   };
 
   useEffect(() => {
-    void loadRole();
+    void (async () => {
+      try {
+        const { role } = await fetchMyRole();
+        if (role) {
+          setRole(role);
+          return;
+        }
+        // Auto-promote: first signed-in user becomes the coordinator (super admin)
+        try {
+          await claimCoordinator();
+        } catch {
+          // ignore — another user may have claimed concurrently
+        }
+        await loadRole();
+      } catch (e) {
+        console.error(e);
+        setRole(null);
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
