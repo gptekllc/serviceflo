@@ -1,59 +1,82 @@
-## Phase 4: AI Smart Import
+## Goal
 
-### Approach
+Replace Firebase entirely with Lovable Cloud (Supabase). Add email/password + Google login, a coordinator role enforced by RLS, gate `/admin` to coordinators, and switch `/screen` and `/mobile` to live Supabase Realtime updates.
 
-Use the built-in **Lovable AI Gateway** (default model `google/gemini-3-flash-preview`, fast + free of API-key setup) called through a TanStack `createServerFn` so the key stays server-side. The "frontend service function" you described becomes a thin client wrapper around that server fn — same DX, no exposed key. (If you'd rather call OpenAI/Gemini directly from the browser with a pasted key, say so and I'll swap step 2 for that instead.)
+## Database (single migration)
 
-### Files
+Tables in `public`:
 
-**`src/lib/ai-gateway.server.ts`** — Lovable AI Gateway provider helper (per the gateway knowledge file). Server-only.
+- `program_items`
+  - `id uuid pk default gen_random_uuid()`
+  - `program_id text not null default 'default'`
+  - `title text not null`
+  - `duration int not null default 0`
+  - `status text not null default 'upcoming'` (check: upcoming|live|completed)
+  - `item_type text not null default 'announcement'` (check: announcement|speaker|song)
+  - `content jsonb not null default '{}'::jsonb`
+  - `order_index int not null`
+  - `created_at`, `updated_at` timestamps + update trigger
+- `app_role` enum: `coordinator`, `attendee`
+- `user_roles (user_id uuid → auth.users, role app_role)` with unique `(user_id, role)`
+- Security-definer `public.has_role(_user_id uuid, _role app_role)` to avoid RLS recursion
 
-**`src/lib/ai-import.functions.ts`** — `parseBulletin` server function:
-- `createServerFn({ method: "POST" })`
-- `inputValidator` with Zod: `{ text: string (1..20000) }`
-- Reads `process.env.LOVABLE_API_KEY` inside handler; throws clear error if missing.
-- Calls `generateText` with `Output.object({ schema })` where schema is:
-  ```
-  { items: Array<{
-      title: string,
-      duration: number,           // minutes, default 5 if unknown
-      itemType: 'announcement' | 'speaker' | 'song',
-      content:
-        | { body: string }                                     // announcement
-        | { speaker: string, topic: string, bio: string }      // speaker
-        | { lyrics: string }                                   // song
-    }> }
-  ```
-- System prompt instructs strict chronological parsing, exact widget-type mapping, missing fields → empty strings, durations as integers, no extra commentary.
-- Returns `{ items: ParsedItem[] }`.
+GRANTs + RLS:
 
-**`src/lib/programs.ts`** — add `addItemsBulk(items, programId?)`:
-- Read current max `orderIndex` once.
-- Write each new item via `writeBatch`, incrementing `orderIndex` from `max+1`.
-- Status defaults to `"upcoming"`.
+- `program_items`: `GRANT SELECT to anon, authenticated` (program is publicly viewable on /screen + /mobile). `GRANT INSERT/UPDATE/DELETE to authenticated`. `GRANT ALL to service_role`.
+  - Policies: SELECT `using (true)`; INSERT/UPDATE/DELETE `using (has_role(auth.uid(), 'coordinator'))`.
+- `user_roles`: `GRANT SELECT to authenticated`, `GRANT ALL to service_role`. Policies: users can SELECT their own row; only service_role writes (no public insert).
+- Enable Realtime: `ALTER PUBLICATION supabase_realtime ADD TABLE public.program_items;` and `ALTER TABLE public.program_items REPLICA IDENTITY FULL;`
 
-**`src/routes/admin.tsx`** — add the "AI Smart Import" section above the manual form:
-- Collapsible panel with header "AI Smart Import" and a sparkle/wand icon.
-- Large `<textarea>` (8 rows) for pasted bulletin text.
-- "Import with AI" button — disabled while empty or running.
-- Loading state: spinner + "Reading your bulletin…" overlay on the panel; button shows spinner.
-- On success: shows a small preview list of the parsed items (title + type chip), an "Add all to program" button, and an "Edit raw text" link to retry. Clicking "Add all" calls `addItemsBulk` and the realtime listener instantly renders them in the list below.
-- On error: shows the error message inline (covers 429 rate-limited and 402 credit-exhausted with friendly copy).
+First-coordinator bootstrap: after sign-up the user can claim the coordinator role only if no coordinator exists yet. Implemented as a SECURITY DEFINER function `public.claim_coordinator_if_first()` that inserts `(auth.uid(), 'coordinator')` only when the `user_roles` table has zero coordinator rows. Called from a "Become coordinator" button on the auth screen when the signed-in user has no role yet.
 
-### Loading + UX details
+## Auth setup
 
-- Spinner is a Tailwind-only `animate-spin` SVG using `currentColor` (no new deps).
-- The textarea stays editable during loading-failed states so the user can tweak and retry.
-- After successful import, the textarea clears and the panel collapses.
+- Enable email/password (no auto-confirm) and Google via `configure_social_auth`.
+- New public route `src/routes/auth.tsx`: tabs for Sign In / Sign Up (email+password) and a "Continue with Google" button using `lovable.auth.signInWithOAuth("google", { redirect_uri: window.location.origin })`. After auth, redirect to `search.redirect` or `/`.
+- Reset password flow is out of scope for this change (can be added later).
 
-### Out of scope
+## Route gating
 
-- Editing parsed items before insert (only "Add all" or discard for now).
-- Streaming the AI response — the JSON output isn't useful partial.
-- Persisting drafts across reloads.
+- Move admin to `src/routes/_authenticated/admin.tsx` (auth gate handled by managed `_authenticated/route.tsx`).
+- Inside the admin component, additionally check `has_role` via a server fn `getMyRole`; if not coordinator, render an "Access restricted — coordinator only" screen with a sign-out button. RLS already blocks writes, so this is the UX guard.
+- Delete old `src/routes/admin.tsx`.
+- Register `attachSupabaseAuth` in `src/start.ts` `functionMiddleware`.
 
-### Technical notes
+## Data layer rewrite (`src/lib/programs.ts`)
 
-- Server fn keeps `LOVABLE_API_KEY` off the client.
-- Discriminated-union content shape is enforced both in the Zod schema sent to the model and in the client-side `addItemsBulk` writer; malformed items are skipped with a console warning rather than failing the whole batch.
-- `addItemsBulk` uses a single `writeBatch`, so all items appear at once via the existing `onSnapshot` listener — no extra wiring.
+Replace Firestore implementation with Supabase:
+
+- `subscribeItems(cb, programId='default')`: initial `select * order by order_index`, then `supabase.channel('program_items').on('postgres_changes', { event:'*', schema:'public', table:'program_items', filter:\`program_id=eq.${programId}\` }, ...)`. Apply INSERT/UPDATE/DELETE to local state, re-sort, call `cb`. Return cleanup that calls `supabase.removeChannel`.
+- `addItem`, `addItemsBulk`: compute next `order_index` from a single `select order_index order desc limit 1`, then insert (bulk uses array insert).
+- `goLive(id)`: two updates — set previous live rows to `completed`, set the target to `live`. (RLS allows because caller is coordinator.)
+- Keep the same exported types so `mobile.tsx`, `screen.tsx`, `admin.tsx` compile unchanged aside from field renames. Map `order_index → orderIndex` and `item_type → itemType` in the data-access layer so UI keeps its current shape.
+
+## Realtime in /screen and /mobile
+
+No code change needed beyond the new `subscribeItems`: both pages already call it on mount and re-render on updates. Remove `useAnonymousAuth()` calls in both — Supabase reads use the anon publishable key and don't need a session.
+
+## Server function
+
+`src/lib/auth.functions.ts` — `getMyRole` using `requireSupabaseAuth`, returns `{ role: 'coordinator' | 'attendee' | null }` by querying `user_roles` for `context.userId`. Used by admin route to render the gate.
+
+`src/lib/auth.functions.ts` also exports `claimCoordinatorIfFirst` (calls the SECURITY DEFINER RPC) for the bootstrap button.
+
+## Firebase removal
+
+Delete:
+- `src/lib/firebase.ts`
+- `src/hooks/useAnonymousAuth.ts` (and its `useAnonymousAuth()` call in `__root.tsx` and `admin.tsx`)
+- `firebase` from `package.json` (`bun remove firebase`)
+- Stale `VITE_FIREBASE_*` env references — none needed.
+
+## Files touched
+
+- New: migration; `src/lib/auth.functions.ts`; `src/routes/auth.tsx`; `src/routes/_authenticated/admin.tsx`
+- Rewritten: `src/lib/programs.ts`; `src/routes/screen.tsx` and `src/routes/mobile.tsx` (drop anon auth import); `src/routes/__root.tsx` (drop anon auth); `src/start.ts` (append `attachSupabaseAuth`)
+- Deleted: `src/routes/admin.tsx`; `src/lib/firebase.ts`; `src/hooks/useAnonymousAuth.ts`
+
+## Out of scope
+
+- Password reset page.
+- Migrating existing Firestore data (project is freshly remixed; starting empty in Supabase).
+- An admin UI for granting the coordinator role to additional users (the first-coordinator bootstrap covers initial setup; later coordinators can be added via the Cloud dashboard).
