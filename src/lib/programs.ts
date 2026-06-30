@@ -141,7 +141,7 @@ export async function addItem(
     title: input.title,
     duration: input.duration,
     item_type: input.itemType,
-    content: input.content as unknown as Record<string, unknown>,
+    content: input.content as unknown as Json,
     order_index: order,
     status: "upcoming",
   });
@@ -164,7 +164,7 @@ export async function addItemsBulk(
     title: input.title,
     duration: input.duration,
     item_type: input.itemType,
-    content: input.content as unknown as Record<string, unknown>,
+    content: input.content as unknown as Json,
     order_index: start + i,
     status: "upcoming" as const,
   }));
