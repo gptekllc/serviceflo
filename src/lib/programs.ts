@@ -40,7 +40,7 @@ type Row = {
   duration: number;
   status: ItemStatus;
   item_type: ItemType;
-  content: ItemContent | null;
+  content: Json | null;
   program_id: string;
 };
 
@@ -52,7 +52,7 @@ function rowToItem(r: Row): ProgramItem {
     duration: r.duration,
     status: r.status,
     itemType: r.item_type,
-    content: r.content ?? {},
+    content: (r.content ?? {}) as ItemContent,
   };
 }
 
