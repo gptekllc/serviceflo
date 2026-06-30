@@ -276,12 +276,17 @@ export async function updateItem(
     content?: ItemContent;
   },
 ) {
-  const update: Record<string, unknown> = {};
-  if (patch.title !== undefined) update.title = patch.title;
-  if (patch.duration !== undefined) update.duration = patch.duration;
-  if (patch.itemType !== undefined) update.item_type = patch.itemType;
-  if (patch.content !== undefined) update.content = patch.content as unknown as Json;
-  const { error } = await supabase.from("program_items").update(update).eq("id", id);
+  const { error } = await supabase
+    .from("program_items")
+    .update({
+      ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(patch.duration !== undefined ? { duration: patch.duration } : {}),
+      ...(patch.itemType !== undefined ? { item_type: patch.itemType } : {}),
+      ...(patch.content !== undefined
+        ? { content: patch.content as unknown as Json }
+        : {}),
+    })
+    .eq("id", id);
   if (error) throw error;
 }
 
