@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { useAnonymousAuth } from "../hooks/useAnonymousAuth";
 import { subscribeItems, type ProgramItem } from "../lib/programs";
 
 export const Route = createFileRoute("/screen")({
@@ -14,7 +13,6 @@ export const Route = createFileRoute("/screen")({
 });
 
 function ScreenPage() {
-  useAnonymousAuth();
   const [items, setItems] = useState<ProgramItem[]>([]);
 
   useEffect(() => subscribeItems(setItems), []);

@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { useAnonymousAuth } from "../hooks/useAnonymousAuth";
 import {
   subscribeItems,
   type AnnouncementContent,
@@ -27,7 +26,6 @@ const TYPE_LABEL: Record<ItemType, string> = {
 };
 
 function MobilePage() {
-  useAnonymousAuth();
   const [items, setItems] = useState<ProgramItem[]>([]);
 
   useEffect(() => subscribeItems(setItems), []);
