@@ -231,16 +231,21 @@ export async function addItem(
   programId: string,
 ) {
   const order = await nextOrderIndex(programId);
-  const { error } = await supabase.from("program_items").insert({
-    program_id: programId,
-    title: input.title,
-    duration: input.duration,
-    item_type: input.itemType,
-    content: input.content as unknown as Json,
-    order_index: order,
-    status: "upcoming",
-  });
+  const { data, error } = await supabase
+    .from("program_items")
+    .insert({
+      program_id: programId,
+      title: input.title,
+      duration: input.duration,
+      item_type: input.itemType,
+      content: input.content as unknown as Json,
+      order_index: order,
+      status: "upcoming",
+    })
+    .select("id")
+    .single();
   if (error) throw error;
+  return (data as { id: string }).id;
 }
 
 export async function addItemsBulk(

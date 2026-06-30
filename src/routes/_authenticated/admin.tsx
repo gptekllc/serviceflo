@@ -47,6 +47,7 @@ import {
   type AppRole,
 } from "@/lib/auth.functions";
 import { supabase } from "@/integrations/supabase/client";
+import { AnnouncementsComposer } from "@/components/admin/AnnouncementsComposer";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
@@ -160,6 +161,7 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
   const [programs, setPrograms] = useState<Program[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [items, setItems] = useState<ProgramItem[]>([]);
+  const [activeItems, setActiveItems] = useState<ProgramItem[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => subscribePrograms(setPrograms), []);
@@ -181,6 +183,22 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
     }
     return subscribeItems(setItems, selectedId);
   }, [selectedId]);
+
+  const active = useMemo(
+    () => programs.find((p) => p.isActive) ?? null,
+    [programs],
+  );
+
+  // Subscribe to active program items only when it differs from selected
+  useEffect(() => {
+    if (!active || active.id === selectedId) {
+      setActiveItems([]);
+      return;
+    }
+    return subscribeItems(setActiveItems, active.id);
+  }, [active, selectedId]);
+
+  const composerItems = active && active.id === selectedId ? items : activeItems;
 
   const selected = useMemo(
     () => programs.find((p) => p.id === selectedId) ?? null,
@@ -211,12 +229,15 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
           </button>
         </div>
 
+        <AnnouncementsComposer activeProgram={active} items={composerItems} />
+
         <ProgramSwitcher
           programs={programs}
           selected={selected}
           onSelect={setSelectedId}
           onError={setErr}
         />
+
 
         {selected && (
           <>
