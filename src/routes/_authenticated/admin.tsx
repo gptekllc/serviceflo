@@ -47,6 +47,7 @@ import {
   type AppRole,
 } from "@/lib/auth.functions";
 import { supabase } from "@/integrations/supabase/client";
+import { AnnouncementsComposer } from "@/components/admin/AnnouncementsComposer";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
