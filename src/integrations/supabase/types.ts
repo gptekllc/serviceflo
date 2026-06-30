@@ -21,6 +21,7 @@ export type Database = {
           duration: number
           id: string
           item_type: string
+          live_started_at: string | null
           order_index: number
           program_id: string
           status: string
@@ -33,8 +34,9 @@ export type Database = {
           duration?: number
           id?: string
           item_type?: string
+          live_started_at?: string | null
           order_index: number
-          program_id?: string
+          program_id: string
           status?: string
           title: string
           updated_at?: string
@@ -45,10 +47,43 @@ export type Database = {
           duration?: number
           id?: string
           item_type?: string
+          live_started_at?: string | null
           order_index?: number
           program_id?: string
           status?: string
           title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "program_items_program_id_fkey"
+            columns: ["program_id"]
+            isOneToOne: false
+            referencedRelation: "programs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      programs: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
           updated_at?: string
         }
         Relationships: []
@@ -79,7 +114,12 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      advance_program: {
+        Args: { _direction: string; _program_id: string }
+        Returns: string
+      }
       claim_coordinator_if_first: { Args: never; Returns: boolean }
+      clear_live: { Args: { _program_id: string }; Returns: undefined }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -87,6 +127,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      set_active_program: { Args: { _id: string }; Returns: undefined }
     }
     Enums: {
       app_role: "coordinator" | "attendee"

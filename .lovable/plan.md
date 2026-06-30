@@ -1,82 +1,85 @@
 ## Goal
 
-Replace Firebase entirely with Lovable Cloud (Supabase). Add email/password + Google login, a coordinator role enforced by RLS, gate `/admin` to coordinators, and switch `/screen` and `/mobile` to live Supabase Realtime updates.
+Three feature areas:
+1. **/mobile** — add a real-time **Announcements feed** alongside the existing live/up-next view.
+2. **/screen** — coordinator-driven manual playback (next/previous + countdown timer; controls live in /admin only).
+3. **/admin** — full program editor: multiple programs, drag-and-drop reordering, inline edit, delete/duplicate, plus playback controls.
 
-## Database (single migration)
+## Database (one migration)
 
-Tables in `public`:
+- New table `public.programs`: `id uuid pk`, `name text not null`, `is_active boolean not null default false`, `created_at`, `updated_at`. Trigger to keep only one `is_active=true` row at a time. Seed one row `('default-… uuid', 'Main Program', true)` and backfill `program_items.program_id` to its uuid.
+- Change `program_items.program_id` from `text default 'default'` to `uuid references public.programs(id) on delete cascade`. Add index on `(program_id, order_index)`.
+- GRANTs + RLS on `programs`:
+  - `SELECT` to anon + authenticated (public reads the active program).
+  - `INSERT/UPDATE/DELETE` to authenticated, gated by `has_role(auth.uid(), 'coordinator')`.
+- Enable Realtime on `programs` (publication + `REPLICA IDENTITY FULL`).
 
-- `program_items`
-  - `id uuid pk default gen_random_uuid()`
-  - `program_id text not null default 'default'`
-  - `title text not null`
-  - `duration int not null default 0`
-  - `status text not null default 'upcoming'` (check: upcoming|live|completed)
-  - `item_type text not null default 'announcement'` (check: announcement|speaker|song)
-  - `content jsonb not null default '{}'::jsonb`
-  - `order_index int not null`
-  - `created_at`, `updated_at` timestamps + update trigger
-- `app_role` enum: `coordinator`, `attendee`
-- `user_roles (user_id uuid → auth.users, role app_role)` with unique `(user_id, role)`
-- Security-definer `public.has_role(_user_id uuid, _role app_role)` to avoid RLS recursion
+`program_items` policies and Realtime remain as today; only the column type changes.
 
-GRANTs + RLS:
+## Data layer (`src/lib/programs.ts`)
 
-- `program_items`: `GRANT SELECT to anon, authenticated` (program is publicly viewable on /screen + /mobile). `GRANT INSERT/UPDATE/DELETE to authenticated`. `GRANT ALL to service_role`.
-  - Policies: SELECT `using (true)`; INSERT/UPDATE/DELETE `using (has_role(auth.uid(), 'coordinator'))`.
-- `user_roles`: `GRANT SELECT to authenticated`, `GRANT ALL to service_role`. Policies: users can SELECT their own row; only service_role writes (no public insert).
-- Enable Realtime: `ALTER PUBLICATION supabase_realtime ADD TABLE public.program_items;` and `ALTER TABLE public.program_items REPLICA IDENTITY FULL;`
+- Add `Program` type and helpers:
+  - `subscribePrograms(cb)` — Realtime on `programs`, returns list sorted by `created_at`.
+  - `getActiveProgram()`, `setActiveProgram(id)` (RPC or two-step update wrapped in a SECURITY DEFINER function `set_active_program(_id uuid)` to atomically flip the flag).
+  - `createProgram(name)`, `renameProgram(id, name)`, `deleteProgram(id)`.
+- Update existing helpers to take `programId: string` (uuid) — no more `'default'` literal.
+- New mutations:
+  - `updateItem(id, patch)` — title, duration, itemType, content.
+  - `deleteItem(id)`.
+  - `duplicateItem(id)` — fetch row, insert copy with next `order_index`, status `upcoming`.
+  - `reorderItems(programId, orderedIds[])` — single bulk `upsert` updating `order_index` for affected rows.
+  - `goToNext(programId)` / `goToPrevious(programId)` — find current `live`, mark it `completed` (next) or `upcoming` (previous), then promote neighbor by `order_index`. Implemented as a SECURITY DEFINER RPC `advance_program(_program_id uuid, _direction text)` so it's one round-trip and atomic.
+  - `clearLive(programId)` — return to standby.
 
-First-coordinator bootstrap: after sign-up the user can claim the coordinator role only if no coordinator exists yet. Implemented as a SECURITY DEFINER function `public.claim_coordinator_if_first()` that inserts `(auth.uid(), 'coordinator')` only when the `user_roles` table has zero coordinator rows. Called from a "Become coordinator" button on the auth screen when the signed-in user has no role yet.
+## /mobile — Announcements feed
 
-## Auth setup
+Add a second section below "Up Next" titled **Announcements**: all `item_type='announcement'` items for the active program, newest `created_at` first, regardless of status. Card shows title + body + relative timestamp. Live updates via the existing `subscribeItems` channel (filter client-side). No new subscription needed.
 
-- Enable email/password (no auto-confirm) and Google via `configure_social_auth`.
-- New public route `src/routes/auth.tsx`: tabs for Sign In / Sign Up (email+password) and a "Continue with Google" button using `lovable.auth.signInWithOAuth("google", { redirect_uri: window.location.origin })`. After auth, redirect to `search.redirect` or `/`.
-- Reset password flow is out of scope for this change (can be added later).
+Subscribe to active program via `subscribePrograms` to follow program switches automatically (re-subscribe items when active changes).
 
-## Route gating
+## /screen — Manual playback display
 
-- Move admin to `src/routes/_authenticated/admin.tsx` (auth gate handled by managed `_authenticated/route.tsx`).
-- Inside the admin component, additionally check `has_role` via a server fn `getMyRole`; if not coordinator, render an "Access restricted — coordinator only" screen with a sign-out button. RLS already blocks writes, so this is the UX guard.
-- Delete old `src/routes/admin.tsx`.
-- Register `attachSupabaseAuth` in `src/start.ts` `functionMiddleware`.
+No on-screen controls (per user choice). Add a **countdown timer** to the live card:
+- When an item becomes `live`, capture `started_at = now()` in a new column `program_items.live_started_at timestamptz` (set by the `advance_program` RPC and by `goLive`).
+- /screen computes `remaining = duration*60 - (now - live_started_at)`, ticks every second client-side, displays `MM:SS`. When ≤0, shows `00:00` in destructive color but does NOT auto-advance.
+- Subscribe to active program; if it changes, swap in the new program's items.
 
-## Data layer rewrite (`src/lib/programs.ts`)
+## /admin — Editor + controls
 
-Replace Firestore implementation with Supabase:
+Coordinator view restructured into three stacked panels:
 
-- `subscribeItems(cb, programId='default')`: initial `select * order by order_index`, then `supabase.channel('program_items').on('postgres_changes', { event:'*', schema:'public', table:'program_items', filter:\`program_id=eq.${programId}\` }, ...)`. Apply INSERT/UPDATE/DELETE to local state, re-sort, call `cb`. Return cleanup that calls `supabase.removeChannel`.
-- `addItem`, `addItemsBulk`: compute next `order_index` from a single `select order_index order desc limit 1`, then insert (bulk uses array insert).
-- `goLive(id)`: two updates — set previous live rows to `completed`, set the target to `live`. (RLS allows because caller is coordinator.)
-- Keep the same exported types so `mobile.tsx`, `screen.tsx`, `admin.tsx` compile unchanged aside from field renames. Map `order_index → orderIndex` and `item_type → itemType` in the data-access layer so UI keeps its current shape.
+1. **Program selector**
+   - Dropdown of programs + "New program" inline input + rename/delete buttons for the selected program.
+   - "Set as active" toggle (the one shown on /screen and /mobile).
 
-## Realtime in /screen and /mobile
+2. **Playback controls** (sticky bar)
+   - Shows current live item title + live countdown mirror.
+   - Buttons: **Previous**, **Next**, **Pause/Clear live**, **Restart timer**. All call the RPCs above and surface errors inline.
 
-No code change needed beyond the new `subscribeItems`: both pages already call it on mount and re-render on updates. Remove `useAnonymousAuth()` calls in both — Supabase reads use the anon publishable key and don't need a session.
+3. **Item editor list**
+   - Each row uses **@dnd-kit/sortable** for drag-and-drop reordering (install `@dnd-kit/core` + `@dnd-kit/sortable`). On drop, call `reorderItems`.
+   - Row has: drag handle, order #, title, type badge, duration, status, and actions: **Edit**, **Duplicate**, **Delete**, **Go Live**.
+   - "Edit" expands the row inline into the same field set already used by the Add form (title/duration/type + type-specific content), with Save/Cancel.
+   - Existing **Add item** form and **AI Smart Import** stay above the list and target the selected program.
 
-## Server function
+## Files
 
-`src/lib/auth.functions.ts` — `getMyRole` using `requireSupabaseAuth`, returns `{ role: 'coordinator' | 'attendee' | null }` by querying `user_roles` for `context.userId`. Used by admin route to render the gate.
-
-`src/lib/auth.functions.ts` also exports `claimCoordinatorIfFirst` (calls the SECURITY DEFINER RPC) for the bootstrap button.
-
-## Firebase removal
-
-Delete:
-- `src/lib/firebase.ts`
-- `src/hooks/useAnonymousAuth.ts` (and its `useAnonymousAuth()` call in `__root.tsx` and `admin.tsx`)
-- `firebase` from `package.json` (`bun remove firebase`)
-- Stale `VITE_FIREBASE_*` env references — none needed.
-
-## Files touched
-
-- New: migration; `src/lib/auth.functions.ts`; `src/routes/auth.tsx`; `src/routes/_authenticated/admin.tsx`
-- Rewritten: `src/lib/programs.ts`; `src/routes/screen.tsx` and `src/routes/mobile.tsx` (drop anon auth import); `src/routes/__root.tsx` (drop anon auth); `src/start.ts` (append `attachSupabaseAuth`)
-- Deleted: `src/routes/admin.tsx`; `src/lib/firebase.ts`; `src/hooks/useAnonymousAuth.ts`
+- New migration (programs table + RPCs + `live_started_at` column + Realtime).
+- Rewritten: `src/lib/programs.ts` (multi-program API + new mutations + RPC wrappers).
+- Rewritten: `src/routes/_authenticated/admin.tsx` (program selector, controls, editor list).
+- Edited: `src/routes/mobile.tsx` (announcements section + follow active program).
+- Edited: `src/routes/screen.tsx` (countdown timer + follow active program).
+- New: `src/components/admin/SortableItemRow.tsx`, `src/components/admin/ProgramSwitcher.tsx`, `src/components/admin/PlaybackControls.tsx`, `src/components/admin/EditItemForm.tsx` (to keep `admin.tsx` manageable).
+- `package.json`: add `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities`.
 
 ## Out of scope
 
-- Password reset page.
-- Migrating existing Firestore data (project is freshly remixed; starting empty in Supabase).
-- An admin UI for granting the coordinator role to additional users (the first-coordinator bootstrap covers initial setup; later coordinators can be added via the Cloud dashboard).
+- Per-attendee interactions (reactions, Q&A).
+- On-screen hover controls at /screen.
+- Auto-advance on timer expiry (manual only, per choice).
+- Exporting / importing programs as JSON.
+
+## Open assumptions
+
+- "Active program" is global (one shared show at a time). If you ever want concurrent independent shows, /screen and /mobile would need a `?program=<id>` query param — easy to add later.
+- Deleting a program cascades its items (matches drag-editor expectations).

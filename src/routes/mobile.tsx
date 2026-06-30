@@ -2,8 +2,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   subscribeItems,
+  subscribePrograms,
   type AnnouncementContent,
   type ItemType,
+  type Program,
   type ProgramItem,
   type SongContent,
   type SpeakerContent,
@@ -26,13 +28,30 @@ const TYPE_LABEL: Record<ItemType, string> = {
 };
 
 function MobilePage() {
+  const [programs, setPrograms] = useState<Program[]>([]);
   const [items, setItems] = useState<ProgramItem[]>([]);
 
-  useEffect(() => subscribeItems(setItems), []);
+  useEffect(() => subscribePrograms(setPrograms), []);
+  const active = useMemo(() => programs.find((p) => p.isActive), [programs]);
+
+  useEffect(() => {
+    if (!active) {
+      setItems([]);
+      return;
+    }
+    return subscribeItems(setItems, active.id);
+  }, [active]);
 
   const live = useMemo(() => items.find((i) => i.status === "live"), [items]);
   const upcoming = useMemo(
     () => items.filter((i) => i.status === "upcoming"),
+    [items],
+  );
+  const announcements = useMemo(
+    () =>
+      items
+        .filter((i) => i.itemType === "announcement")
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
     [items],
   );
 
@@ -40,7 +59,9 @@ function MobilePage() {
     <div className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-10 border-b border-border bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="mx-auto flex max-w-md items-center justify-between px-5 py-3">
-          <div className="text-sm font-semibold tracking-tight">Live Program</div>
+          <div className="text-sm font-semibold tracking-tight">
+            {active?.name ?? "Live Program"}
+          </div>
           <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
             <span
               className={`inline-block size-2 rounded-full ${live ? "animate-pulse bg-destructive" : "bg-muted-foreground/40"}`}
@@ -75,9 +96,63 @@ function MobilePage() {
             </ol>
           )}
         </section>
+
+        <section className="mt-10">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              Announcements
+            </h2>
+            <span className="text-xs text-muted-foreground">
+              {announcements.length}
+            </span>
+          </div>
+
+          {announcements.length === 0 ? (
+            <div className="mt-4 rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+              No announcements yet.
+            </div>
+          ) : (
+            <ul className="mt-4 space-y-3">
+              {announcements.map((item) => (
+                <AnnouncementCard key={item.id} item={item} />
+              ))}
+            </ul>
+          )}
+        </section>
       </main>
     </div>
   );
+}
+
+function AnnouncementCard({ item }: { item: ProgramItem }) {
+  const c = (item.content ?? {}) as Partial<AnnouncementContent>;
+  return (
+    <li className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+      <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        <span>{TYPE_LABEL.announcement}</span>
+        <span>{relativeTime(item.createdAt)}</span>
+      </div>
+      <div className="mt-1 text-base font-semibold text-card-foreground">
+        {item.title}
+      </div>
+      {c.body && (
+        <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+          {c.body}
+        </p>
+      )}
+    </li>
+  );
+}
+
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
 }
 
 function LiveCard({ item }: { item: ProgramItem | undefined }) {
@@ -128,7 +203,7 @@ function AnnouncementBody({ item }: { item: ProgramItem }) {
         {item.title}
       </h1>
       {c.body && (
-        <p className="mt-4 text-base leading-relaxed text-primary-foreground/85">
+        <p className="mt-4 whitespace-pre-line text-base leading-relaxed text-primary-foreground/85">
           {c.body}
         </p>
       )}
