@@ -191,20 +191,21 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      advance_presentation: {
+        Args: { _direction: string; _program_id: string; _target: string }
+        Returns: string
+      }
       advance_program: {
         Args: { _direction: string; _program_id: string }
         Returns: string
       }
-      advance_presentation: {
-        Args: { _direction: string; _program_id: string; _target: string }
-        Returns: string | null
-      }
       claim_coordinator_if_first: { Args: never; Returns: boolean }
+      clear_live: { Args: { _program_id: string }; Returns: undefined }
       clear_presentation_target: {
         Args: { _program_id: string; _target: string }
         Returns: undefined
       }
-      clear_live: { Args: { _program_id: string }; Returns: undefined }
+      generate_join_code: { Args: never; Returns: string }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -213,11 +214,11 @@ export type Database = {
         Returns: boolean
       }
       join_program_by_code: { Args: { _code: string }; Returns: string }
+      set_active_program: { Args: { _id: string }; Returns: undefined }
       set_presentation_item: {
         Args: { _item_id: string; _program_id: string; _target: string }
         Returns: undefined
       }
-      set_active_program: { Args: { _id: string }; Returns: undefined }
     }
     Enums: {
       app_role: "coordinator" | "attendee"
