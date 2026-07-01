@@ -6,6 +6,7 @@ import {
   subscribeItems,
   subscribePrograms,
   type AnnouncementContent,
+  type ImageContent,
   type PresentationOutput,
   type Program,
   type ProgramItem,
@@ -66,6 +67,7 @@ function ScreenPage() {
     [items, audienceItemId],
   );
   const aspectRatio = active?.audienceAspectRatio ?? "16:9";
+  const backgroundColor = active?.audienceBackgroundColor ?? "#05070b";
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -105,6 +107,7 @@ function ScreenPage() {
           ? "min-h-screen bg-[#05070b] text-white"
           : "group relative min-h-screen bg-[#05070b] p-3 text-white"
       }
+      style={{ backgroundColor }}
     >
       {!isEmbedded && (
         <button
@@ -124,6 +127,7 @@ function ScreenPage() {
             ? "flex min-h-screen w-full items-center justify-center bg-[#05070b]"
             : "mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[2200px] items-center justify-center bg-[#05070b]"
         }
+        style={{ backgroundColor }}
       >
         <div
           ref={screenFrameRef}
@@ -151,6 +155,7 @@ function ScreenPage() {
                     ? "flex min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(0,177,255,0.12),transparent_45%),rgba(255,255,255,0.03)] p-[clamp(0.85rem,1.7vw,2.5rem)]"
                     : "flex min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(0,177,255,0.12),transparent_45%),rgba(255,255,255,0.03)] p-[clamp(0.85rem,1.7vw,2.5rem)] shadow-2xl"
                 }
+                style={{ backgroundColor }}
               >
                 {live ? (
                   <div className="min-h-0 flex flex-1 flex-col overflow-auto">
@@ -192,6 +197,27 @@ function LiveBody({ item, embedded = false }: { item: ProgramItem; embedded?: bo
   const badgeClass = embedded
     ? "w-fit rounded-full bg-white/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-white/55"
     : "w-fit rounded-full bg-white/[0.04] px-4 py-2 text-xs uppercase tracking-[0.25em] text-white/55";
+
+  if (item.itemType === "image") {
+    const content = (item.content ?? {}) as Partial<ImageContent>;
+    return (
+      <div className="relative h-full min-h-0 overflow-hidden">
+        {content.imageUrl ? (
+          <img
+            src={content.imageUrl}
+            alt={content.alt || item.title}
+            className={`h-full w-full ${
+              content.fit === "cover" ? "object-cover" : "object-contain"
+            }`}
+          />
+        ) : (
+          <div className="grid h-full place-items-center text-center text-white/55">
+            Image unavailable
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (item.itemType === "speaker") {
     const content = (item.content ?? {}) as Partial<SpeakerContent>;
@@ -308,5 +334,6 @@ function LiveBody({ item, embedded = false }: { item: ProgramItem; embedded?: bo
 function labelFor(item: ProgramItem) {
   if (item.itemType === "announcement") return "Announcement";
   if (item.itemType === "speaker") return "Speaker";
+  if (item.itemType === "image") return "Image";
   return "Song";
 }

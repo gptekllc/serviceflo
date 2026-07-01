@@ -32,9 +32,11 @@ import {
   subscribeItems,
   subscribePresentationOutputs,
   subscribePrograms,
-  updateProgramAspectRatios,
+  updateProgramAppearance,
   updateItem,
+  uploadProgramImage,
   type AnnouncementContent,
+  type ImageContent,
   type ItemContent,
   type ItemType,
   type PresentationOutput,
@@ -47,11 +49,7 @@ import {
   type SpeakerContent,
 } from "@/lib/programs";
 import { parseBulletin, type ParsedItem } from "@/lib/ai-import.functions";
-import {
-  getMyRole,
-  claimCoordinatorIfFirst,
-  type AppRole,
-} from "@/lib/auth.functions";
+import { ensureMyCoordinatorRole, getMyRole, type AppRole } from "@/lib/auth.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { AnnouncementsComposer } from "@/components/admin/AnnouncementsComposer";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -70,16 +68,12 @@ const TYPE_LABEL: Record<ItemType, string> = {
   announcement: "Announcement",
   speaker: "Speaker",
   song: "Song",
+  image: "Image",
 };
 
 type PushMode = "separate" | "together";
 type CoordinatorSectionKey =
-  | "announcements"
-  | "programSwitcher"
-  | "playback"
-  | "smartImport"
-  | "addItem"
-  | "programItems";
+  "announcements" | "programSwitcher" | "playback" | "smartImport" | "addItem" | "programItems";
 
 function toDateTimeLocalInput(iso: string | null): string {
   if (!iso) return "";
@@ -110,11 +104,9 @@ function isFutureAnnouncement(item: ProgramItem): boolean {
 function AdminPage() {
   const navigate = useNavigate();
   const fetchMyRole = useServerFn(getMyRole);
-  const claimCoordinator = useServerFn(claimCoordinatorIfFirst);
+  const ensureCoordinatorRole = useServerFn(ensureMyCoordinatorRole);
 
   const [role, setRole] = useState<AppRole | null | "loading">("loading");
-  const [claimError, setClaimError] = useState<string | null>(null);
-  const [claiming, setClaiming] = useState(false);
 
   const loadRole = async () => {
     try {
@@ -129,17 +121,7 @@ function AdminPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const { role } = await fetchMyRole();
-        if (role) {
-          setRole(role);
-          return;
-        }
-        // Auto-promote: first signed-in user becomes the coordinator (super admin)
-        try {
-          await claimCoordinator();
-        } catch {
-          // ignore — another user may have claimed concurrently
-        }
+        await ensureCoordinatorRole();
         await loadRole();
       } catch (e) {
         console.error(e);
@@ -149,27 +131,14 @@ function AdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     navigate({ to: "/auth", replace: true });
   };
 
-  const handleClaim = async () => {
-    setClaiming(true);
-    setClaimError(null);
-    try {
-      const { claimed } = await claimCoordinator();
-      if (claimed) {
-        await loadRole();
-      } else {
-        setClaimError("A coordinator already exists. Ask them to grant you access.");
-      }
-    } catch (e) {
-      setClaimError((e as Error).message);
-    } finally {
-      setClaiming(false);
-    }
+  const handleAdminSignIn = async () => {
+    await supabase.auth.signOut();
+    navigate({ to: "/auth", search: { redirect: "/admin" }, replace: true });
   };
 
   if (role === "loading") {
@@ -184,19 +153,16 @@ function AdminPage() {
     return (
       <div className="min-h-screen bg-background text-foreground">
         <div className="mx-auto max-w-md px-6 py-16 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Coordinator access required
-          </h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Admin sign-in required</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Only event coordinators can manage the program.
+            Sign in with an admin account to manage the program.
           </p>
           <div className="mt-6 space-y-3">
             <button
-              onClick={handleClaim}
-              disabled={claiming}
+              onClick={handleAdminSignIn}
               className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {claiming ? "…" : "Become the first coordinator"}
+              Sign in as admin
             </button>
             <button
               onClick={handleSignOut}
@@ -205,11 +171,6 @@ function AdminPage() {
               Sign out
             </button>
           </div>
-          {claimError && (
-            <div className="mt-4 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {claimError}
-            </div>
-          )}
         </div>
       </div>
     );
@@ -263,10 +224,7 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
     return subscribePresentationOutputs(setOutputs, selectedId);
   }, [selectedId]);
 
-  const active = useMemo(
-    () => programs.find((p) => p.isActive) ?? null,
-    [programs],
-  );
+  const active = useMemo(() => programs.find((p) => p.isActive) ?? null, [programs]);
 
   // Subscribe to active program items only when it differs from selected
   useEffect(() => {
@@ -304,9 +262,7 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-[1500px] px-6 py-10">
         <div className="flex items-baseline justify-between gap-4">
-          <h1 className="text-3xl font-semibold tracking-tight">
-            Event Coordinator
-          </h1>
+          <h1 className="text-3xl font-semibold tracking-tight">Event Coordinator</h1>
           <div className="flex items-center gap-4">
             <Link
               to="/users"
@@ -376,10 +332,7 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
                   open={openSections.addItem}
                   onToggle={() => toggleSection("addItem")}
                 >
-                  <AddItemForm
-                    programId={selected.id}
-                    onError={setErr}
-                  />
+                  <AddItemForm programId={selected.id} onError={setErr} />
                 </CollapsibleSection>
 
                 {err && (
@@ -407,9 +360,7 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
           </div>
 
           <aside className="min-w-0 space-y-4 xl:sticky xl:top-6 xl:h-fit">
-            <LivePreviewPanel
-              activeProgram={active}
-            />
+            <LivePreviewPanel activeProgram={active} />
           </aside>
         </div>
       </div>
@@ -431,10 +382,8 @@ function PrePublishPreviewPanel({
     [outputs],
   );
 
-  const audienceItem =
-    items.find((item) => item.id === outputByTarget.get("audience")) ?? null;
-  const stageItem =
-    items.find((item) => item.id === outputByTarget.get("stage")) ?? null;
+  const audienceItem = items.find((item) => item.id === outputByTarget.get("audience")) ?? null;
+  const stageItem = items.find((item) => item.id === outputByTarget.get("stage")) ?? null;
 
   const audienceQueue = useMemo(
     () => nextQueuedItems(items, audienceItem?.orderIndex ?? null),
@@ -459,16 +408,8 @@ function PrePublishPreviewPanel({
 
       {selectedProgram ? (
         <div className="mt-4 space-y-4">
-          <ScreenStylePreviewCard
-            label="Audience"
-            current={audienceItem}
-            queue={audienceQueue}
-          />
-          <ScreenStylePreviewCard
-            label="Stage"
-            current={stageItem}
-            queue={stageQueue}
-          />
+          <ScreenStylePreviewCard label="Audience" current={audienceItem} queue={audienceQueue} />
+          <ScreenStylePreviewCard label="Stage" current={stageItem} queue={stageQueue} />
         </div>
       ) : (
         <div className="mt-3 rounded-md border border-dashed border-border px-3 py-5 text-sm text-muted-foreground">
@@ -511,9 +452,7 @@ function ScreenStylePreviewCard({
         <div className="text-lg font-semibold leading-tight">
           {current?.title ?? "Nothing selected"}
         </div>
-        <div className={`mt-2 text-xs leading-relaxed ${mutedClass}`}>
-          {detail}
-        </div>
+        <div className={`mt-2 text-xs leading-relaxed ${mutedClass}`}>{detail}</div>
       </div>
 
       <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3">
@@ -542,11 +481,17 @@ function ScreenStylePreviewCard({
 function previewItemDetail(item: ProgramItem): string {
   if (item.itemType === "speaker") {
     const content = (item.content ?? {}) as Partial<SpeakerContent>;
-    return content.topic?.trim() || content.bio?.trim() || content.speaker?.trim() || "Speaker details";
+    return (
+      content.topic?.trim() || content.bio?.trim() || content.speaker?.trim() || "Speaker details"
+    );
   }
   if (item.itemType === "song") {
     const content = (item.content ?? {}) as Partial<SongContent>;
     return content.lyrics?.trim() || "Song lyrics will appear here.";
+  }
+  if (item.itemType === "image") {
+    const content = (item.content ?? {}) as Partial<ImageContent>;
+    return content.fileName?.trim() || content.alt?.trim() || "Uploaded image slide.";
   }
   const content = (item.content ?? {}) as Partial<AnnouncementContent>;
   return content.body?.trim() || "Announcement details will appear here.";
@@ -559,11 +504,7 @@ function nextQueuedItems(items: ProgramItem[], fromOrderIndex: number | null): P
   return ordered.filter((item) => item.orderIndex > fromOrderIndex).slice(0, 3);
 }
 
-function LivePreviewPanel({
-  activeProgram,
-}: {
-  activeProgram: Program | null;
-}) {
+function LivePreviewPanel({ activeProgram }: { activeProgram: Program | null }) {
   const [popout, setPopout] = useState<{
     label: "Audience" | "Stage";
     src: "/screen" | "/stage";
@@ -576,9 +517,7 @@ function LivePreviewPanel({
         <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
           Live previews
         </div>
-        <h2 className="mt-2 text-lg font-semibold tracking-tight">
-          Published screens
-        </h2>
+        <h2 className="mt-2 text-lg font-semibold tracking-tight">Published screens</h2>
         <p className="mt-1 text-xs text-muted-foreground">
           {activeProgram
             ? `${activeProgram.name} · code ${activeProgram.joinCode}`
@@ -920,9 +859,7 @@ function ProgramSwitcher({
       </div>
       {selected && (
         <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-3 py-3">
-          <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">
-            Join code
-          </div>
+          <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Join code</div>
           <div className="font-mono text-lg font-semibold tracking-[0.18em]">
             {selected.joinCode}
           </div>
@@ -1021,11 +958,7 @@ function PlaybackControls({
         </div>
       </div>
 
-      <ScreenRatioControls
-        program={program}
-        disabled={busy}
-        onError={onError}
-      />
+      <ScreenRatioControls program={program} disabled={busy} onError={onError} />
 
       <div className="grid gap-3 lg:grid-cols-2">
         <TargetPlaybackCard
@@ -1041,10 +974,7 @@ function PlaybackControls({
           }
           onClear={() =>
             void run(() =>
-              clearPresentationTarget(
-                program.id,
-                pushMode === "together" ? "both" : "audience",
-              ),
+              clearPresentationTarget(program.id, pushMode === "together" ? "both" : "audience"),
             )
           }
           onNext={() =>
@@ -1117,20 +1047,20 @@ function ScreenRatioControls({
   return (
     <div className="mb-4 rounded-lg border border-border bg-background/70 p-3">
       <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        Screen aspect ratios
+        Screen appearance
       </div>
       <div className="mt-1 text-sm text-muted-foreground">
-        Pick a presentation ratio for each output screen.
+        Pick each output screen's ratio and background color.
       </div>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <label className="text-xs font-medium text-muted-foreground">
-          Audience screen
+          Audience ratio
           <select
             value={program.audienceAspectRatio}
             disabled={isDisabled}
             onChange={(e) =>
               void run(() =>
-                updateProgramAspectRatios(program.id, {
+                updateProgramAppearance(program.id, {
                   audienceAspectRatio: e.target.value as ScreenAspectRatio,
                 }),
               )
@@ -1146,13 +1076,13 @@ function ScreenRatioControls({
         </label>
 
         <label className="text-xs font-medium text-muted-foreground">
-          Stage screen
+          Stage ratio
           <select
             value={program.stageAspectRatio}
             disabled={isDisabled}
             onChange={(e) =>
               void run(() =>
-                updateProgramAspectRatios(program.id, {
+                updateProgramAppearance(program.id, {
                   stageAspectRatio: e.target.value as ScreenAspectRatio,
                 }),
               )
@@ -1165,6 +1095,56 @@ function ScreenRatioControls({
               </option>
             ))}
           </select>
+        </label>
+
+        <label className="text-xs font-medium text-muted-foreground">
+          Audience background
+          <div className="mt-1 flex items-center gap-2">
+            <input
+              type="color"
+              value={program.audienceBackgroundColor}
+              disabled={isDisabled}
+              onChange={(e) =>
+                void run(() =>
+                  updateProgramAppearance(program.id, {
+                    audienceBackgroundColor: e.target.value,
+                  }),
+                )
+              }
+              className="h-10 w-12 rounded-md border border-input bg-background p-1"
+            />
+            <input
+              value={program.audienceBackgroundColor}
+              disabled={isDisabled}
+              readOnly
+              className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+        </label>
+
+        <label className="text-xs font-medium text-muted-foreground">
+          Stage background
+          <div className="mt-1 flex items-center gap-2">
+            <input
+              type="color"
+              value={program.stageBackgroundColor}
+              disabled={isDisabled}
+              onChange={(e) =>
+                void run(() =>
+                  updateProgramAppearance(program.id, {
+                    stageBackgroundColor: e.target.value,
+                  }),
+                )
+              }
+              className="h-10 w-12 rounded-md border border-input bg-background p-1"
+            />
+            <input
+              value={program.stageBackgroundColor}
+              disabled={isDisabled}
+              readOnly
+              className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
         </label>
       </div>
     </div>
@@ -1244,11 +1224,7 @@ function LiveCountdown({ item }: { item: ProgramItem }) {
   }, []);
 
   if (!item.liveStartedAt || item.duration <= 0) {
-    return (
-      <div className="mt-0.5 text-xs text-muted-foreground">
-        {item.duration} min
-      </div>
-    );
+    return <div className="mt-0.5 text-xs text-muted-foreground">{item.duration} min</div>;
   }
   const startedAt = new Date(item.liveStartedAt).getTime();
   const totalMs = item.duration * 60_000;
@@ -1290,6 +1266,9 @@ function AddItemForm({
   const [topic, setTopic] = useState("");
   const [bio, setBio] = useState("");
   const [lyrics, setLyrics] = useState("");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageFit, setImageFit] = useState<ImageContent["fit"]>("contain");
+  const [imageAlt, setImageAlt] = useState("");
   const [busy, setBusy] = useState(false);
 
   const reset = () => {
@@ -1303,11 +1282,18 @@ function AddItemForm({
     setTopic("");
     setBio("");
     setLyrics("");
+    setImageFile(null);
+    setImageFit("contain");
+    setImageAlt("");
   };
 
   const handle = async (e: FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
+    if (!title.trim() && itemType !== "image") return;
+    if (itemType === "image" && !imageFile) {
+      onError("Choose an image file to upload.");
+      return;
+    }
     setBusy(true);
     onError(null);
     try {
@@ -1315,15 +1301,23 @@ function AddItemForm({
       if (itemType === "announcement") content = { body: body.trim() };
       else if (itemType === "speaker")
         content = { speaker: speaker.trim(), topic: topic.trim(), bio: bio.trim() };
-      else content = { lyrics: lyrics.trim() };
+      else if (itemType === "song") content = { lyrics: lyrics.trim() };
+      else {
+        if (!imageFile) throw new Error("Choose an image file to upload.");
+        const uploaded = await uploadProgramImage(programId, imageFile);
+        content = {
+          ...uploaded,
+          fit: imageFit,
+          alt: imageAlt.trim() || title.trim() || uploaded.alt,
+        };
+      }
       await addItem(
         {
-          title: title.trim(),
+          title: title.trim() || imageFile?.name.replace(/\.[^.]+$/, "") || "Image slide",
           duration: Number(duration) || 0,
           itemType,
           content,
-          publishedAt:
-            itemType === "announcement" ? parseDateTimeLocalInput(publishAt) : null,
+          publishedAt: itemType === "announcement" ? parseDateTimeLocalInput(publishAt) : null,
           isPinned: itemType === "announcement" ? isPinned : false,
           priority: itemType === "announcement" ? Number(priority) || 0 : 0,
         },
@@ -1362,6 +1356,7 @@ function AddItemForm({
             <option value="announcement">Announcement</option>
             <option value="speaker">Speaker</option>
             <option value="song">Song</option>
+            <option value="image">Image</option>
           </select>
         </div>
         <div>
@@ -1420,13 +1415,51 @@ function AddItemForm({
       {itemType === "song" && (
         <Textarea label="Lyrics" value={lyrics} onChange={setLyrics} rows={6} mono />
       )}
+      {itemType === "image" && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_160px]">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Image file</label>
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              onChange={(e) => {
+                const file = e.target.files?.[0] ?? null;
+                setImageFile(file);
+                if (file && !title.trim()) {
+                  setTitle(file.name.replace(/\.[^.]+$/, ""));
+                }
+                if (file && !imageAlt.trim()) {
+                  setImageAlt(file.name.replace(/\.[^.]+$/, ""));
+                }
+              }}
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <label className="text-xs font-medium text-muted-foreground">
+            Fit
+            <select
+              value={imageFit}
+              onChange={(e) => setImageFit(e.target.value as ImageContent["fit"])}
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="contain">Contain</option>
+              <option value="cover">Cover</option>
+            </select>
+          </label>
+          <div className="sm:col-span-2">
+            <TextInput label="Alt text" value={imageAlt} onChange={setImageAlt} />
+          </div>
+        </div>
+      )}
       <div className="flex justify-end">
         <button
           type="submit"
-          disabled={busy || !title.trim()}
+          disabled={
+            busy || (!title.trim() && itemType !== "image") || (itemType === "image" && !imageFile)
+          }
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
-          {busy ? "Adding…" : "Add item"}
+          {busy ? "Adding…" : itemType === "image" ? "Upload image slide" : "Add item"}
         </button>
       </div>
     </form>
@@ -1498,9 +1531,7 @@ function ItemList({
   runSafe: (fn: () => Promise<void>) => Promise<void>;
 }) {
   const [localOrder, setLocalOrder] = useState<string[] | null>(null);
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-  );
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const orderedIds = localOrder ?? items.map((i) => i.id);
   const byId = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
@@ -1580,8 +1611,9 @@ function SortableRow({
   pushMode: PushMode;
   runSafe: (fn: () => Promise<void>) => Promise<void>;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: item.id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: item.id,
+  });
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -1596,11 +1628,7 @@ function SortableRow({
   );
 
   return (
-    <li
-      ref={setNodeRef}
-      style={style}
-      className="rounded-lg border border-border bg-card"
-    >
+    <li ref={setNodeRef} style={style} className="rounded-lg border border-border bg-card">
       <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-3 p-3">
         <button
           type="button"
@@ -1672,8 +1700,7 @@ function SortableRow({
           </button>
           <button
             onClick={() => {
-              if (confirm(`Delete "${item.title}"?`))
-                void runSafe(() => deleteItem(item.id));
+              if (confirm(`Delete "${item.title}"?`)) void runSafe(() => deleteItem(item.id));
             }}
             className="rounded-md border border-destructive/40 bg-background px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
           >
@@ -1682,7 +1709,9 @@ function SortableRow({
           {pushMode === "separate" ? (
             <>
               <button
-                onClick={() => void runSafe(() => setPresentationItem(item.id, programId, "audience"))}
+                onClick={() =>
+                  void runSafe(() => setPresentationItem(item.id, programId, "audience"))
+                }
                 className="rounded-md bg-foreground px-2 py-1 text-xs font-medium text-background hover:opacity-90"
               >
                 Audience
@@ -1731,7 +1760,7 @@ function EditItemPanel({
   const [duration, setDuration] = useState(String(item.duration));
   const [itemType, setItemType] = useState<ItemType>(item.itemType);
   const c = (item.content ?? {}) as Partial<
-    AnnouncementContent & SpeakerContent & SongContent
+    AnnouncementContent & SpeakerContent & SongContent & ImageContent
   >;
   const [body, setBody] = useState(c.body ?? "");
   const [publishAt, setPublishAt] = useState(toDateTimeLocalInput(item.publishedAt));
@@ -1741,21 +1770,49 @@ function EditItemPanel({
   const [topic, setTopic] = useState(c.topic ?? "");
   const [bio, setBio] = useState(c.bio ?? "");
   const [lyrics, setLyrics] = useState(c.lyrics ?? "");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageUrl, setImageUrl] = useState(c.imageUrl ?? "");
+  const [imageStoragePath, setImageStoragePath] = useState(c.storagePath ?? "");
+  const [imageFileName, setImageFileName] = useState(c.fileName ?? "");
+  const [imageMimeType, setImageMimeType] = useState(c.mimeType ?? "");
+  const [imageFit, setImageFit] = useState<ImageContent["fit"]>(c.fit ?? "contain");
+  const [imageAlt, setImageAlt] = useState(c.alt ?? "");
 
   const save = async () => {
     let content: ItemContent;
     if (itemType === "announcement") content = { body: body.trim() };
     else if (itemType === "speaker")
       content = { speaker: speaker.trim(), topic: topic.trim(), bio: bio.trim() };
-    else content = { lyrics: lyrics.trim() };
+    else if (itemType === "song") content = { lyrics: lyrics.trim() };
+    else {
+      let imageContent: ImageContent;
+      if (imageFile) {
+        imageContent = await uploadProgramImage(item.programId, imageFile);
+      } else if (imageUrl) {
+        imageContent = {
+          imageUrl,
+          storagePath: imageStoragePath,
+          fileName: imageFileName || title.trim() || "Image slide",
+          mimeType: imageMimeType,
+          fit: imageFit,
+          alt: imageAlt.trim() || title.trim(),
+        };
+      } else {
+        throw new Error("Choose an image file to upload.");
+      }
+      content = {
+        ...imageContent,
+        fit: imageFit,
+        alt: imageAlt.trim() || title.trim() || imageContent.alt,
+      };
+    }
     await runSafe(() =>
       updateItem(item.id, {
         title: title.trim(),
         duration: Number(duration) || 0,
         itemType,
         content,
-        publishedAt:
-          itemType === "announcement" ? parseDateTimeLocalInput(publishAt) : null,
+        publishedAt: itemType === "announcement" ? parseDateTimeLocalInput(publishAt) : null,
         isPinned: itemType === "announcement" ? isPinned : false,
         priority: itemType === "announcement" ? Number(priority) || 0 : 0,
       }),
@@ -1777,6 +1834,7 @@ function EditItemPanel({
             <option value="announcement">Announcement</option>
             <option value="speaker">Speaker</option>
             <option value="song">Song</option>
+            <option value="image">Image</option>
           </select>
         </div>
         <div>
@@ -1834,6 +1892,47 @@ function EditItemPanel({
       )}
       {itemType === "song" && (
         <Textarea label="Lyrics" value={lyrics} onChange={setLyrics} rows={6} mono />
+      )}
+      {itemType === "image" && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_160px]">
+          {imageUrl && (
+            <div className="sm:col-span-2 overflow-hidden rounded-md border border-border bg-black">
+              <img src={imageUrl} alt={imageAlt || title} className="h-40 w-full object-contain" />
+            </div>
+          )}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Replace image</label>
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              onChange={(e) => {
+                const file = e.target.files?.[0] ?? null;
+                setImageFile(file);
+                if (file) {
+                  setImageFileName(file.name);
+                  setImageMimeType(file.type);
+                  if (!title.trim()) setTitle(file.name.replace(/\.[^.]+$/, ""));
+                  if (!imageAlt.trim()) setImageAlt(file.name.replace(/\.[^.]+$/, ""));
+                }
+              }}
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            />
+          </div>
+          <label className="text-xs font-medium text-muted-foreground">
+            Fit
+            <select
+              value={imageFit}
+              onChange={(e) => setImageFit(e.target.value as ImageContent["fit"])}
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              <option value="contain">Contain</option>
+              <option value="cover">Cover</option>
+            </select>
+          </label>
+          <div className="sm:col-span-2">
+            <TextInput label="Alt text" value={imageAlt} onChange={setImageAlt} />
+          </div>
+        </div>
       )}
       <div className="flex justify-end gap-2">
         <button

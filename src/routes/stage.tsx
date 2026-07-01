@@ -8,6 +8,7 @@ import {
 } from "react";
 import {
   type AnnouncementContent,
+  type ImageContent,
   subscribeItems,
   subscribePresentationOutputs,
   subscribePrograms,
@@ -103,6 +104,7 @@ function StagePage() {
 
   const aspectRatio = active?.stageAspectRatio ?? "16:9";
   const audienceAspectRatio = active?.audienceAspectRatio ?? "16:9";
+  const backgroundColor = active?.stageBackgroundColor ?? "#09090b";
 
   useEffect(() => {
     if (typeof window === "undefined" || !hasLoadedPanelLayout) return;
@@ -193,7 +195,10 @@ function StagePage() {
   }, []);
 
   return (
-    <div className="group relative min-h-screen bg-zinc-950 p-1 text-zinc-50">
+    <div
+      className="group relative min-h-screen bg-zinc-950 p-1 text-zinc-50"
+      style={{ backgroundColor }}
+    >
       <button
         type="button"
         onClick={() => {
@@ -206,6 +211,7 @@ function StagePage() {
       <div
         ref={stageHostRef}
         className="mx-auto flex min-h-[calc(100vh-0.5rem)] max-w-[2200px] items-center justify-center bg-zinc-950"
+        style={{ backgroundColor }}
       >
         <div
           onDoubleClick={() => {
@@ -215,7 +221,10 @@ function StagePage() {
           style={{ aspectRatio: toCssAspectRatio(aspectRatio) }}
         >
           <div className="mx-auto h-full max-w-[1800px] p-[clamp(0.06rem,0.25vw,0.2rem)]">
-            <main className="flex h-full min-h-0 flex-col rounded-[2rem] bg-[radial-gradient(circle_at_top,rgba(0,255,196,0.12),transparent_40%),rgba(255,255,255,0.03)] p-[clamp(0.12rem,0.45vw,0.3rem)] shadow-2xl">
+            <main
+              className="flex h-full min-h-0 flex-col rounded-[2rem] bg-[radial-gradient(circle_at_top,rgba(0,255,196,0.12),transparent_40%),rgba(255,255,255,0.03)] p-[clamp(0.12rem,0.45vw,0.3rem)] shadow-2xl"
+              style={{ backgroundColor }}
+            >
               <div className="flex shrink-0 items-center justify-end px-1 pb-[clamp(0.2rem,0.55vw,0.55rem)] pt-1">
                 <div className="font-mono text-[clamp(1rem,2.1vw,2rem)] font-semibold tabular-nums text-zinc-200">
                   {formatClock(now)}
@@ -278,6 +287,7 @@ function toCssAspectRatio(ratio: ScreenAspectRatio): string {
 function labelFor(item: ProgramItem) {
   if (item.itemType === "announcement") return "Announcement";
   if (item.itemType === "speaker") return "Speaker";
+  if (item.itemType === "image") return "Image";
   return "Song";
 }
 
@@ -357,6 +367,25 @@ function StageItemContent({ item }: { item: ProgramItem }) {
     "w-fit rounded-full bg-white/[0.04] px-[clamp(0.4rem,1.7cqw,1rem)] py-[clamp(0.2rem,0.8cqw,0.5rem)] text-[clamp(0.45rem,1.45cqw,0.85rem)] uppercase text-white/55";
   const titleClass =
     "mt-[clamp(0.45rem,1.8cqw,1rem)] text-[clamp(1rem,6.2cqw,5rem)] font-semibold leading-[1.02] text-white";
+
+  if (item.itemType === "image") {
+    const image = content as Partial<ImageContent>;
+    return (
+      <div className="h-full min-w-0 overflow-hidden">
+        {image.imageUrl ? (
+          <img
+            src={image.imageUrl}
+            alt={image.alt || item.title}
+            className={`h-full w-full ${image.fit === "cover" ? "object-cover" : "object-contain"}`}
+          />
+        ) : (
+          <div className="grid h-full place-items-center text-[clamp(0.65rem,2.2cqw,1.2rem)] text-white/55">
+            Image unavailable
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (item.itemType === "speaker") {
     const speaker = content as Partial<SpeakerContent>;

@@ -2,7 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 
 export type ItemStatus = "upcoming" | "live" | "completed";
-export type ItemType = "announcement" | "speaker" | "song";
+export type ItemType = "announcement" | "speaker" | "song" | "image";
 export type PresentationTarget = "audience" | "stage";
 export type PresentationTargetScope = PresentationTarget | "both";
 export type ScreenAspectRatio = "4:3" | "7:5" | "1:1" | "16:9" | "20:9";
@@ -26,11 +26,16 @@ export interface SpeakerContent {
 export interface SongContent {
   lyrics: string;
 }
+export interface ImageContent {
+  imageUrl: string;
+  storagePath: string;
+  fileName: string;
+  mimeType: string;
+  fit: "contain" | "cover";
+  alt: string;
+}
 export type ItemContent =
-  | AnnouncementContent
-  | SpeakerContent
-  | SongContent
-  | Record<string, never>;
+  AnnouncementContent | SpeakerContent | SongContent | ImageContent | Record<string, never>;
 
 export interface ProgramItem {
   id: string;
@@ -55,6 +60,8 @@ export interface Program {
   joinCode: string;
   audienceAspectRatio: ScreenAspectRatio;
   stageAspectRatio: ScreenAspectRatio;
+  audienceBackgroundColor: string;
+  stageBackgroundColor: string;
   createdAt: string;
 }
 
@@ -88,6 +95,8 @@ type ProgramRow = {
   join_code: string;
   audience_aspect_ratio?: ScreenAspectRatio | null;
   stage_aspect_ratio?: ScreenAspectRatio | null;
+  audience_background_color?: string | null;
+  stage_background_color?: string | null;
   created_at: string;
 };
 
@@ -124,6 +133,8 @@ function programRowToProgram(r: ProgramRow): Program {
     joinCode: r.join_code,
     audienceAspectRatio: (r.audience_aspect_ratio ?? "16:9") as ScreenAspectRatio,
     stageAspectRatio: (r.stage_aspect_ratio ?? "16:9") as ScreenAspectRatio,
+    audienceBackgroundColor: r.audience_background_color ?? "#05070b",
+    stageBackgroundColor: r.stage_background_color ?? "#09090b",
     createdAt: r.created_at,
   };
 }
@@ -165,13 +176,9 @@ export function subscribePrograms(cb: (programs: Program[]) => void): () => void
 
   const channel = supabase
     .channel("programs")
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "programs" },
-      () => {
-        void refresh();
-      },
-    )
+    .on("postgres_changes", { event: "*", schema: "public", table: "programs" }, () => {
+      void refresh();
+    })
     .subscribe();
 
   return () => {
@@ -181,11 +188,7 @@ export function subscribePrograms(cb: (programs: Program[]) => void): () => void
 }
 
 export async function createProgram(name: string): Promise<Program> {
-  const { data, error } = await supabase
-    .from("programs")
-    .insert({ name })
-    .select("*")
-    .single();
+  const { data, error } = await supabase.from("programs").insert({ name }).select("*").single();
   if (error) throw error;
   return programRowToProgram(data as ProgramRow);
 }
@@ -229,12 +232,73 @@ export async function updateProgramAspectRatios(
   if (error) throw error;
 }
 
+export async function updateProgramAppearance(
+  id: string,
+  input: {
+    audienceAspectRatio?: ScreenAspectRatio;
+    stageAspectRatio?: ScreenAspectRatio;
+    audienceBackgroundColor?: string;
+    stageBackgroundColor?: string;
+  },
+) {
+  const updates: {
+    audience_aspect_ratio?: ScreenAspectRatio;
+    stage_aspect_ratio?: ScreenAspectRatio;
+    audience_background_color?: string;
+    stage_background_color?: string;
+  } = {};
+
+  if (input.audienceAspectRatio) {
+    updates.audience_aspect_ratio = input.audienceAspectRatio;
+  }
+  if (input.stageAspectRatio) {
+    updates.stage_aspect_ratio = input.stageAspectRatio;
+  }
+  if (input.audienceBackgroundColor) {
+    updates.audience_background_color = input.audienceBackgroundColor;
+  }
+  if (input.stageBackgroundColor) {
+    updates.stage_background_color = input.stageBackgroundColor;
+  }
+  if (Object.keys(updates).length === 0) return;
+
+  const { error } = await supabase.from("programs").update(updates).eq("id", id);
+  if (error) throw error;
+}
+
+export async function uploadProgramImage(programId: string, file: File): Promise<ImageContent> {
+  const ext =
+    file.name
+      .split(".")
+      .pop()
+      ?.toLowerCase()
+      .replace(/[^a-z0-9]/g, "") || "image";
+  const id =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const storagePath = `${programId}/${id}.${ext}`;
+  const { error } = await supabase.storage.from("program-images").upload(storagePath, file, {
+    cacheControl: "31536000",
+    contentType: file.type || "application/octet-stream",
+    upsert: false,
+  });
+  if (error) throw error;
+
+  const { data } = supabase.storage.from("program-images").getPublicUrl(storagePath);
+  return {
+    imageUrl: data.publicUrl,
+    storagePath,
+    fileName: file.name,
+    mimeType: file.type,
+    fit: "contain",
+    alt: file.name.replace(/\.[^.]+$/, ""),
+  };
+}
+
 // ---------- Items ----------
 
-export function subscribeItems(
-  cb: (items: ProgramItem[]) => void,
-  programId: string,
-): () => void {
+export function subscribeItems(cb: (items: ProgramItem[]) => void, programId: string): () => void {
   let current: ProgramItem[] = [];
   let cancelled = false;
 
@@ -322,9 +386,7 @@ export function subscribePresentationOutputs(
           current = [...current, rowToPresentationOutput(payload.new as PresentationOutputRow)];
         } else if (payload.eventType === "UPDATE") {
           const next = rowToPresentationOutput(payload.new as PresentationOutputRow);
-          current = current.map((output) =>
-            output.target === next.target ? next : output,
-          );
+          current = current.map((output) => (output.target === next.target ? next : output));
         } else if (payload.eventType === "DELETE") {
           const oldTarget = (payload.old as { target?: PresentationTarget }).target;
           if (oldTarget) {
@@ -435,12 +497,8 @@ export async function updateItem(
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.duration !== undefined ? { duration: patch.duration } : {}),
       ...(patch.itemType !== undefined ? { item_type: patch.itemType } : {}),
-      ...(patch.content !== undefined
-        ? { content: patch.content as unknown as Json }
-        : {}),
-      ...(patch.publishedAt !== undefined
-        ? { published_at: patch.publishedAt }
-        : {}),
+      ...(patch.content !== undefined ? { content: patch.content as unknown as Json } : {}),
+      ...(patch.publishedAt !== undefined ? { published_at: patch.publishedAt } : {}),
       ...(patch.isPinned !== undefined ? { is_pinned: patch.isPinned } : {}),
       ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
     })
@@ -454,11 +512,7 @@ export async function deleteItem(id: string) {
 }
 
 export async function duplicateItem(id: string, programId: string) {
-  const { data, error } = await supabase
-    .from("program_items")
-    .select("*")
-    .eq("id", id)
-    .single();
+  const { data, error } = await supabase.from("program_items").select("*").eq("id", id).single();
   if (error) throw error;
   const row = data as Row;
   const order = await nextOrderIndex(programId);
@@ -477,33 +531,19 @@ export async function duplicateItem(id: string, programId: string) {
   if (e2) throw e2;
 }
 
-export function isAnnouncementPublished(
-  item: ProgramItem,
-  now = Date.now(),
-): boolean {
+export function isAnnouncementPublished(item: ProgramItem, now = Date.now()): boolean {
   if (item.itemType !== "announcement") return true;
   if (!item.publishedAt) return true;
   return new Date(item.publishedAt).getTime() <= now;
 }
 
-export function visibleUpcomingItems(
-  items: ProgramItem[],
-  now = Date.now(),
-): ProgramItem[] {
-  return items.filter(
-    (item) => item.status === "upcoming" && isAnnouncementPublished(item, now),
-  );
+export function visibleUpcomingItems(items: ProgramItem[], now = Date.now()): ProgramItem[] {
+  return items.filter((item) => item.status === "upcoming" && isAnnouncementPublished(item, now));
 }
 
-export function visibleAnnouncements(
-  items: ProgramItem[],
-  now = Date.now(),
-): ProgramItem[] {
+export function visibleAnnouncements(items: ProgramItem[], now = Date.now()): ProgramItem[] {
   return [...items]
-    .filter(
-      (item) =>
-        item.itemType === "announcement" && isAnnouncementPublished(item, now),
-    )
+    .filter((item) => item.itemType === "announcement" && isAnnouncementPublished(item, now))
     .sort((a, b) => {
       if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
       if (a.priority !== b.priority) return b.priority - a.priority;
@@ -566,10 +606,7 @@ export async function setPresentationItem(
   if (error) throw error;
 }
 
-export async function clearPresentationTarget(
-  programId: string,
-  target: PresentationTargetScope,
-) {
+export async function clearPresentationTarget(programId: string, target: PresentationTargetScope) {
   const { error } = await supabase.rpc("clear_presentation_target", {
     _program_id: programId,
     _target: target,

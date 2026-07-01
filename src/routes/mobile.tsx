@@ -7,6 +7,7 @@ import {
   subscribePresentationOutputs,
   subscribePrograms,
   type AnnouncementContent,
+  type ImageContent,
   type ItemType,
   type PresentationOutput,
   type Program,
@@ -36,6 +37,7 @@ const TYPE_LABEL: Record<ItemType, string> = {
   announcement: "Announcement",
   speaker: "Speaker",
   song: "Song",
+  image: "Image",
 };
 
 type MobileSection = "live" | "schedule" | "announcements";
@@ -88,10 +90,7 @@ function MobilePage() {
     [items, outputByTarget],
   );
   const upcoming = useMemo(() => visibleUpcomingItems(items, now), [items, now]);
-  const announcements = useMemo(
-    () => visibleAnnouncements(items, now),
-    [items, now],
-  );
+  const announcements = useMemo(() => visibleAnnouncements(items, now), [items, now]);
   const schedule = useMemo(() => buildDerivedSchedule(items), [items]);
   const nextItem = upcoming[0];
   const invalidCode = Boolean(requestedCode) && !selectedProgram;
@@ -202,9 +201,7 @@ function MobilePage() {
               <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">
                 Announcements
               </h2>
-              <span className="text-xs text-muted-foreground">
-                {announcements.length}
-              </span>
+              <span className="text-xs text-muted-foreground">{announcements.length}</span>
             </div>
 
             {announcements.length === 0 ? (
@@ -296,13 +293,7 @@ function NowNextPanel({
   );
 }
 
-function AnnouncementCard({
-  item,
-  now,
-}: {
-  item: ProgramItem;
-  now: number;
-}) {
+function AnnouncementCard({ item, now }: { item: ProgramItem; now: number }) {
   const c = (item.content ?? {}) as Partial<AnnouncementContent>;
   return (
     <li className="rounded-2xl border border-border bg-card p-4 shadow-sm">
@@ -317,9 +308,7 @@ function AnnouncementCard({
         </div>
         <span>{relativeTime(item.publishedAt ?? item.createdAt, now)}</span>
       </div>
-      <div className="mt-1 text-base font-semibold text-card-foreground">
-        {item.title}
-      </div>
+      <div className="mt-1 text-base font-semibold text-card-foreground">{item.title}</div>
       {c.body && (
         <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
           {c.body}
@@ -360,6 +349,8 @@ function LiveCard({ item }: { item: ProgramItem | undefined }) {
           <SpeakerBody item={item} />
         ) : item.itemType === "song" ? (
           <SongBody item={item} />
+        ) : item.itemType === "image" ? (
+          <ImageBody item={item} />
         ) : (
           <AnnouncementBody item={item} />
         )}
@@ -372,9 +363,7 @@ function AnnouncementBody({ item }: { item: ProgramItem }) {
   const c = (item.content ?? {}) as Partial<AnnouncementContent>;
   return (
     <div>
-      <h1 className="text-3xl font-semibold leading-tight tracking-tight">
-        {item.title}
-      </h1>
+      <h1 className="text-3xl font-semibold leading-tight tracking-tight">{item.title}</h1>
       {c.body && (
         <p className="mt-4 whitespace-pre-line text-base leading-relaxed text-primary-foreground/85">
           {c.body}
@@ -402,9 +391,7 @@ function SpeakerBody({ item }: { item: ProgramItem }) {
           {c.topic}
         </div>
       )}
-      <h1 className="mt-2 text-3xl font-semibold leading-tight tracking-tight">
-        {name}
-      </h1>
+      <h1 className="mt-2 text-3xl font-semibold leading-tight tracking-tight">{name}</h1>
       <div className="mt-5 flex items-start gap-4">
         <div className="grid size-12 shrink-0 place-items-center rounded-full bg-primary-foreground/15 text-sm font-semibold">
           {initials || "•"}
@@ -426,18 +413,13 @@ function SongBody({ item }: { item: ProgramItem }) {
 
   return (
     <div>
-      <h1 className="text-3xl font-semibold leading-tight tracking-tight">
-        {item.title}
-      </h1>
+      <h1 className="text-3xl font-semibold leading-tight tracking-tight">{item.title}</h1>
       {lines.length === 0 ? (
         <p className="mt-4 text-sm text-primary-foreground/70">No lyrics yet.</p>
       ) : (
         <div className="mt-5 max-h-80 overflow-auto rounded-2xl bg-primary-foreground/10 px-5 py-5">
           {lines.map((line, i) => (
-            <p
-              key={i}
-              className={`text-center text-lg leading-snug ${line.trim() ? "" : "h-4"}`}
-            >
+            <p key={i} className={`text-center text-lg leading-snug ${line.trim() ? "" : "h-4"}`}>
               {line}
             </p>
           ))}
@@ -468,9 +450,7 @@ function ScheduleRow({
               {labelFor(item)}
             </span>
             {isCurrent && (
-              <span className="rounded-full bg-primary/15 px-2 py-0.5 text-primary">
-                live
-              </span>
+              <span className="rounded-full bg-primary/15 px-2 py-0.5 text-primary">live</span>
             )}
           </div>
           <div className="mt-2 truncate text-base font-semibold text-card-foreground">
@@ -485,6 +465,24 @@ function ScheduleRow({
         </div>
       </div>
     </li>
+  );
+}
+
+function ImageBody({ item }: { item: ProgramItem }) {
+  const c = (item.content ?? {}) as Partial<ImageContent>;
+  return (
+    <div>
+      <h1 className="text-3xl font-semibold leading-tight tracking-tight">{item.title}</h1>
+      {c.imageUrl ? (
+        <img
+          src={c.imageUrl}
+          alt={c.alt || item.title}
+          className="mt-5 max-h-80 w-full rounded-2xl bg-primary-foreground/10 object-contain"
+        />
+      ) : (
+        <p className="mt-4 text-sm text-primary-foreground/70">Image unavailable.</p>
+      )}
+    </div>
   );
 }
 
