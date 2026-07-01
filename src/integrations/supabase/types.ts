@@ -20,10 +20,13 @@ export type Database = {
           created_at: string
           duration: number
           id: string
+          is_pinned: boolean
           item_type: string
           live_started_at: string | null
           order_index: number
+          priority: number
           program_id: string
+          published_at: string | null
           status: string
           title: string
           updated_at: string
@@ -33,10 +36,13 @@ export type Database = {
           created_at?: string
           duration?: number
           id?: string
+          is_pinned?: boolean
           item_type?: string
           live_started_at?: string | null
           order_index: number
+          priority?: number
           program_id: string
+          published_at?: string | null
           status?: string
           title: string
           updated_at?: string
@@ -46,10 +52,13 @@ export type Database = {
           created_at?: string
           duration?: number
           id?: string
+          is_pinned?: boolean
           item_type?: string
           live_started_at?: string | null
           order_index?: number
+          priority?: number
           program_id?: string
+          published_at?: string | null
           status?: string
           title?: string
           updated_at?: string
