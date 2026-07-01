@@ -82,8 +82,8 @@ function isPowerPointItem(item: ProgramItem): boolean {
   return item.itemType === "image" && content.kind === "pptx" && !!content.pptxUrl;
 }
 
-function itemTypeLabel(item: ProgramItem): string {
-  return isPowerPointItem(item) ? "PowerPoint" : TYPE_LABEL[item.itemType];
+function itemTypeLabel(item: Pick<ProgramItem, "itemType" | "content">): string {
+  return isPowerPointItem(item as ProgramItem) ? "PowerPoint" : TYPE_LABEL[item.itemType];
 }
 
 type PushMode = "separate" | "together";
