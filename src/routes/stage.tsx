@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   subscribeItems,
   subscribePresentationOutputs,
@@ -28,6 +28,8 @@ function StagePage() {
   const [items, setItems] = useState<ProgramItem[]>([]);
   const [outputs, setOutputs] = useState<PresentationOutput[]>([]);
   const [now, setNow] = useState(() => Date.now());
+  const stageHostRef = useRef<HTMLDivElement | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => subscribePrograms(setPrograms), []);
   useEffect(() => {
@@ -63,16 +65,6 @@ function StagePage() {
     () => outputs.find((output) => output.target === "stage") ?? null,
     [outputs],
   );
-  const audienceOutput = useMemo(
-    () => outputs.find((output) => output.target === "audience") ?? null,
-    [outputs],
-  );
-  const audienceItem = useMemo(
-    () =>
-      items.find((item) => item.id === outputByTarget.get("audience")) ??
-      items.find((item) => item.status === "live"),
-    [items, outputByTarget],
-  );
   const queue = useMemo(() => {
     if (!stageItem) return items.slice(0, 3);
     return items
@@ -81,15 +73,61 @@ function StagePage() {
   }, [items, stageItem]);
   const aspectRatio = active?.stageAspectRatio ?? "16:9";
 
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    const syncFullscreen = () => {
+      setIsFullscreen(document.fullscreenElement === stageHostRef.current);
+    };
+
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && document.fullscreenElement) {
+        void document.exitFullscreen();
+      }
+    };
+
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    document.addEventListener("keydown", handleEsc);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", syncFullscreen);
+      document.removeEventListener("keydown", handleEsc);
+    };
+  }, []);
+
+  const toggleFullscreen = async () => {
+    if (typeof document === "undefined") return;
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+      return;
+    }
+    await stageHostRef.current?.requestFullscreen();
+  };
+
   return (
-    <div className="min-h-screen bg-zinc-950 p-3 text-zinc-50">
-      <div className="mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[2200px] items-center justify-center">
+    <div className="group relative min-h-screen bg-zinc-950 p-3 text-zinc-50">
+      <button
+        type="button"
+        onClick={() => {
+          void toggleFullscreen();
+        }}
+        className="pointer-events-none absolute right-6 top-6 z-20 rounded-md border border-white/20 bg-black/55 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-200 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 focus:pointer-events-auto focus:opacity-100"
+      >
+        {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+      </button>
+      <div
+        ref={stageHostRef}
+        className="mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[2200px] items-center justify-center bg-zinc-950"
+      >
         <div
+          onDoubleClick={() => {
+            void toggleFullscreen();
+          }}
           className="w-full max-h-full overflow-hidden rounded-2xl border border-white/10 shadow-2xl"
           style={{ aspectRatio: toCssAspectRatio(aspectRatio) }}
         >
-          <div className="mx-auto grid h-full max-w-[1800px] gap-8 px-8 py-10 xl:grid-cols-[minmax(0,1fr)_26rem]">
-        <main className="flex min-h-[70vh] flex-col rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(0,255,196,0.12),transparent_40%),rgba(255,255,255,0.03)] p-8 shadow-2xl">
+          <div className="mx-auto h-full max-w-[1800px] p-[clamp(0.75rem,1.8vw,2.5rem)]">
+        <main className="flex min-h-0 flex-col rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(0,255,196,0.12),transparent_40%),rgba(255,255,255,0.03)] p-[clamp(1rem,1.8vw,2rem)] shadow-2xl">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-5">
             <div>
               <div className="text-xs font-semibold uppercase tracking-[0.35em] text-cyan-300/80">
@@ -100,19 +138,14 @@ function StagePage() {
               </div>
             </div>
             <div className="text-right">
-              <div className="font-mono text-3xl tabular-nums text-zinc-200">
+              <div className="font-mono text-[clamp(1.35rem,2.3vw,2rem)] tabular-nums text-zinc-200">
                 {formatClock(now)}
               </div>
-              {audienceItem && (
-                <div className="mt-1 text-xs uppercase tracking-[0.28em] text-zinc-500">
-                  Audience: {audienceItem.title}
-                </div>
-              )}
             </div>
           </div>
 
-          <div className="mt-8 grid flex-1 gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
-            <section className="flex min-h-[50vh] flex-col rounded-[1.75rem] border border-white/10 bg-black/20 p-7">
+          <div className="mt-[clamp(0.75rem,1.5vw,2rem)] grid min-h-0 flex-1 gap-[clamp(0.75rem,1.4vw,1.5rem)] xl:grid-cols-[minmax(0,1fr)_minmax(14rem,20rem)]">
+            <section className="flex min-h-0 flex-col rounded-[1.75rem] border border-white/10 bg-black/20 p-[clamp(0.85rem,1.6vw,1.75rem)]">
               {stageItem ? (
                 <>
                   <div className="flex items-center justify-between gap-4">
@@ -123,7 +156,7 @@ function StagePage() {
                       {labelFor(stageItem)}
                     </div>
                   </div>
-                  <div className="mt-4 text-5xl font-semibold leading-[1.04] tracking-tight lg:text-7xl">
+                  <div className="mt-4 text-[clamp(1.85rem,4.6vw,4.5rem)] font-semibold leading-[1.04] tracking-tight">
                     {stageItem.title}
                   </div>
                   <div className="mt-4 flex items-center gap-3 text-sm uppercase tracking-[0.24em] text-zinc-500">
@@ -132,7 +165,7 @@ function StagePage() {
                       <span>Routed {relativeTime(stageOutput.updatedAt, now)}</span>
                     )}
                   </div>
-                  <div className="mt-7 min-h-0 flex-1 overflow-hidden">
+                  <div className="mt-[clamp(0.75rem,1.4vw,1.75rem)] min-h-0 flex-1 overflow-hidden">
                     <StageDetail item={stageItem} />
                   </div>
                 </>
@@ -142,7 +175,7 @@ function StagePage() {
                     <div className="text-xs uppercase tracking-[0.4em] text-zinc-500">
                       Standby
                     </div>
-                    <div className="mt-4 text-5xl font-semibold tracking-tight text-zinc-300">
+                    <div className="mt-4 text-[clamp(1.65rem,4vw,3rem)] font-semibold tracking-tight text-zinc-300">
                       Nothing routed to stage
                     </div>
                   </div>
@@ -150,42 +183,17 @@ function StagePage() {
               )}
             </section>
 
-            <div className="flex flex-col gap-6">
-              <section className="rounded-[1.75rem] border border-white/10 bg-black/20 p-5">
-                <div className="text-xs font-semibold uppercase tracking-[0.32em] text-zinc-500">
-                  Audience live
-                </div>
-                {audienceItem ? (
-                  <>
-                    <div className="mt-3 text-2xl font-medium leading-tight text-zinc-100">
-                      {audienceItem.title}
-                    </div>
-                    <div className="mt-2 text-sm uppercase tracking-[0.22em] text-zinc-500">
-                      {labelFor(audienceItem)}
-                    </div>
-                    <div className="mt-5">
-                      <AudienceTimer
-                        item={audienceItem}
-                        updatedAt={audienceOutput?.updatedAt ?? null}
-                        now={now}
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <div className="mt-4 text-sm text-zinc-500">Audience screen is clear.</div>
-                )}
-              </section>
-
-              <section className="rounded-[1.75rem] border border-white/10 bg-black/20 p-5">
+            <div className="flex min-h-0 flex-col">
+              <section className="flex min-h-0 flex-1 flex-col rounded-[1.75rem] border border-white/10 bg-black/20 p-[clamp(0.75rem,1.3vw,1.25rem)]">
                 <div className="text-xs font-semibold uppercase tracking-[0.32em] text-zinc-500">
                   Up next
                 </div>
                 {queue.length === 0 ? (
-                  <div className="mt-6 rounded-2xl border border-dashed border-white/10 px-5 py-8 text-center text-sm text-zinc-500">
+                  <div className="mt-6 flex min-h-0 flex-1 items-center justify-center rounded-2xl border border-dashed border-white/10 px-5 py-8 text-center text-sm text-zinc-500">
                     No queued items.
                   </div>
                 ) : (
-                  <ul className="mt-5 space-y-3">
+                  <ul className="mt-5 space-y-3 overflow-auto pr-1">
                     {queue.map((item, index) => (
                       <li
                         key={item.id}
@@ -195,7 +203,7 @@ function StagePage() {
                           <span>{index + 1}</span>
                           <span>{labelFor(item)}</span>
                         </div>
-                        <div className="mt-2 text-xl font-medium leading-tight text-zinc-100">
+                        <div className="mt-2 text-[clamp(1rem,1.9vw,1.25rem)] font-medium leading-tight text-zinc-100">
                           {item.title}
                         </div>
                         <div className="mt-2 text-sm text-zinc-500">{item.duration} min</div>
@@ -230,10 +238,10 @@ function StageDetail({ item }: { item: ProgramItem }) {
           </div>
         )}
         {content.speaker && (
-          <div className="text-3xl font-medium text-zinc-200">{content.speaker}</div>
+          <div className="text-[clamp(1.2rem,2.8vw,1.85rem)] font-medium text-zinc-200">{content.speaker}</div>
         )}
         {content.bio && (
-          <p className="max-w-4xl whitespace-pre-line text-xl leading-relaxed text-zinc-400">
+          <p className="max-w-4xl whitespace-pre-line text-[clamp(0.95rem,2vw,1.3rem)] leading-relaxed text-zinc-400">
             {content.bio}
           </p>
         )}
@@ -244,7 +252,7 @@ function StageDetail({ item }: { item: ProgramItem }) {
   if (item.itemType === "song") {
     const content = (item.content ?? {}) as Partial<SongContent>;
     return (
-      <pre className="max-h-full overflow-auto whitespace-pre-wrap text-2xl leading-relaxed text-zinc-300">
+      <pre className="max-h-full overflow-auto whitespace-pre-wrap text-[clamp(0.95rem,2.4vw,1.6rem)] leading-relaxed text-zinc-300">
         {content.lyrics?.trim() || "No lyrics yet."}
       </pre>
     );
@@ -252,7 +260,7 @@ function StageDetail({ item }: { item: ProgramItem }) {
 
   const content = (item.content ?? {}) as Partial<AnnouncementContent>;
   return (
-    <p className="max-w-4xl whitespace-pre-line text-2xl leading-relaxed text-zinc-300">
+    <p className="max-w-4xl whitespace-pre-line text-[clamp(0.95rem,2.4vw,1.6rem)] leading-relaxed text-zinc-300">
       {content.body?.trim() || "No additional detail."}
     </p>
   );
@@ -271,35 +279,6 @@ function formatClock(now: number) {
   }).format(now);
 }
 
-function AudienceTimer({
-  item,
-  updatedAt,
-  now,
-}: {
-  item: ProgramItem;
-  updatedAt: string | null;
-  now: number;
-}) {
-  const startedAt = item.liveStartedAt ?? updatedAt;
-  if (!startedAt) {
-    return <div className="font-mono text-4xl tabular-nums text-zinc-300">--:--</div>;
-  }
-
-  const base = new Date(startedAt).getTime();
-  const totalMs = item.duration * 60_000;
-  const elapsed = now - base;
-  const remaining = Math.max(0, totalMs - elapsed);
-  const overrun = totalMs > 0 && elapsed > totalMs;
-  const display = formatDuration(overrun ? elapsed - totalMs : remaining);
-
-  return (
-    <div className={`font-mono text-4xl tabular-nums ${overrun ? "text-rose-400" : "text-zinc-200"}`}>
-      {overrun ? "+" : ""}
-      {display}
-    </div>
-  );
-}
-
 function relativeTime(iso: string, now: number) {
   const diff = now - new Date(iso).getTime();
   const m = Math.floor(diff / 60_000);
@@ -311,11 +290,3 @@ function relativeTime(iso: string, now: number) {
   return `${d}d ago`;
 }
 
-function formatDuration(ms: number) {
-  const totalSec = Math.floor(ms / 1000);
-  const m = Math.floor(totalSec / 60)
-    .toString()
-    .padStart(2, "0");
-  const s = (totalSec % 60).toString().padStart(2, "0");
-  return `${m}:${s}`;
-}

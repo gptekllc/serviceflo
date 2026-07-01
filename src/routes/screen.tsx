@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import {
   subscribePresentationOutputs,
@@ -31,6 +31,9 @@ function ScreenPage() {
   const [items, setItems] = useState<ProgramItem[]>([]);
   const [outputs, setOutputs] = useState<PresentationOutput[]>([]);
   const [now, setNow] = useState(() => Date.now());
+  const screenHostRef = useRef<HTMLDivElement | null>(null);
+  const screenFrameRef = useRef<HTMLDivElement | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => subscribePrograms(setPrograms), []);
   useEffect(() => {
@@ -80,15 +83,62 @@ function ScreenPage() {
     return new URL(path, window.location.origin).toString();
   }, [active]);
 
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    const syncFullscreen = () => {
+      setIsFullscreen(document.fullscreenElement === screenHostRef.current);
+    };
+
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && document.fullscreenElement) {
+        void document.exitFullscreen();
+      }
+    };
+
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    document.addEventListener("keydown", handleEsc);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", syncFullscreen);
+      document.removeEventListener("keydown", handleEsc);
+    };
+  }, []);
+
+  const toggleFullscreen = async () => {
+    if (typeof document === "undefined") return;
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+      return;
+    }
+    await screenHostRef.current?.requestFullscreen();
+  };
+
   return (
-    <div className="min-h-screen bg-[#05070b] p-3 text-white">
-      <div className="mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[2200px] items-center justify-center">
+    <div className="group relative min-h-screen bg-[#05070b] p-3 text-white">
+      <button
+        type="button"
+        onClick={() => {
+          void toggleFullscreen();
+        }}
+        className="pointer-events-none absolute right-6 top-6 z-20 rounded-md border border-white/20 bg-black/55 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/80 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 focus:pointer-events-auto focus:opacity-100"
+      >
+        {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+      </button>
+      <div
+        ref={screenHostRef}
+        className="mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[2200px] items-center justify-center bg-[#05070b]"
+      >
         <div
+          ref={screenFrameRef}
+          onDoubleClick={() => {
+            void toggleFullscreen();
+          }}
           className="w-full max-h-full overflow-hidden rounded-2xl border border-white/10 shadow-2xl"
           style={{ aspectRatio: toCssAspectRatio(aspectRatio) }}
         >
-          <div className="mx-auto flex h-full max-w-[1800px] flex-col px-8 py-8">
-        <header className="flex items-center justify-between gap-6 border-b border-white/10 pb-5">
+          <div className="mx-auto flex h-full min-h-0 max-w-[1800px] flex-col px-[clamp(0.75rem,1.6vw,2rem)] py-[clamp(0.75rem,1.6vw,2rem)]">
+        <header className="flex items-center justify-between gap-6 border-b border-white/10 pb-4">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.35em] text-cyan-300/85">
               Audience Screen
@@ -109,8 +159,8 @@ function ScreenPage() {
           </div>
         </header>
 
-        <div className="mt-8 grid flex-1 gap-8 xl:grid-cols-[minmax(0,1fr)_28rem]">
-          <main className="flex min-h-[70vh] flex-col rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(0,177,255,0.12),transparent_45%),rgba(255,255,255,0.03)] p-10 shadow-2xl">
+        <div className="mt-[clamp(0.75rem,1.5vw,2rem)] grid min-h-0 flex-1 gap-[clamp(0.75rem,1.5vw,2rem)] xl:grid-cols-[minmax(0,1fr)_24rem]">
+          <main className="flex min-h-0 flex-col rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(0,177,255,0.12),transparent_45%),rgba(255,255,255,0.03)] p-[clamp(0.85rem,1.7vw,2.5rem)] shadow-2xl">
             {live ? (
               <>
                 <div className="flex items-center justify-between gap-4">
@@ -123,11 +173,11 @@ function ScreenPage() {
                   </div>
                 </div>
 
-                <div className="mt-8 flex flex-1 flex-col">
+                <div className="mt-[clamp(0.75rem,1.4vw,2rem)] min-h-0 flex flex-1 flex-col overflow-auto">
                   <LiveBody item={live} />
                 </div>
 
-                <div className="mt-8 flex items-center justify-between gap-6 border-t border-white/10 pt-6">
+                <div className="mt-[clamp(0.75rem,1.4vw,2rem)] flex items-center justify-between gap-6 border-t border-white/10 pt-[clamp(0.65rem,1.3vw,1.5rem)]">
                   <CountdownTimer item={live} />
                   {upcoming[0] && (
                     <div className="max-w-[36rem] text-right">
@@ -155,9 +205,9 @@ function ScreenPage() {
             )}
           </main>
 
-          <aside className="flex flex-col gap-6">
+          <aside className="flex min-h-0 flex-col gap-[clamp(0.75rem,1.4vw,1.5rem)] overflow-hidden">
             {mobileUrl && active && (
-              <section className="rounded-[2rem] border border-white/10 bg-white/[0.04] p-6 shadow-2xl">
+              <section className="shrink-0 rounded-[2rem] border border-white/10 bg-white/[0.04] p-[clamp(0.75rem,1.3vw,1.5rem)] shadow-2xl">
                 <div className="text-xs uppercase tracking-[0.3em] text-white/40">
                   Follow Along
                 </div>
@@ -174,11 +224,11 @@ function ScreenPage() {
             )}
 
             {announcements.length > 0 && (
-              <section className="rounded-[2rem] border border-white/10 bg-white/[0.04] p-6 shadow-2xl">
+              <section className="flex min-h-0 flex-1 flex-col rounded-[2rem] border border-white/10 bg-white/[0.04] p-[clamp(0.75rem,1.3vw,1.5rem)] shadow-2xl">
                 <div className="text-xs uppercase tracking-[0.3em] text-white/40">
                   Announcements
                 </div>
-                <ul className="mt-5 space-y-4">
+                <ul className="mt-5 flex-1 space-y-4 overflow-auto pr-1">
                   {announcements.map((item) => (
                     <AnnouncementRailCard key={item.id} item={item} now={now} />
                   ))}
@@ -187,34 +237,6 @@ function ScreenPage() {
             )}
           </aside>
         </div>
-
-        {upcoming.length > 0 && (
-          <section className="mt-8 rounded-[2rem] border border-white/10 bg-white/[0.03] px-8 py-7 shadow-2xl">
-            <div className="text-xs uppercase tracking-[0.3em] text-white/40">
-              Upcoming
-            </div>
-            <ul className="mt-5 grid gap-4 lg:grid-cols-2">
-              {upcoming.map((item, idx) => (
-                <li
-                  key={item.id}
-                  className="flex items-baseline justify-between gap-4 rounded-2xl border border-white/10 bg-black/20 px-5 py-5"
-                >
-                  <div className="min-w-0">
-                    <div className="text-xs uppercase tracking-[0.26em] text-white/38">
-                      {idx + 1}. {labelFor(item)}
-                    </div>
-                    <div className="mt-2 truncate text-2xl font-medium text-white/92">
-                      {item.title}
-                    </div>
-                  </div>
-                  <span className="shrink-0 text-sm text-white/40">
-                    {item.duration} min
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
           </div>
         </div>
       </div>

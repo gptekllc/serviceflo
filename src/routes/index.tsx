@@ -12,6 +12,7 @@ export const Route = createFileRoute("/")({
 
 const links = [
   { to: "/admin", label: "Admin", desc: "Event coordinator dashboard" },
+  { to: "/users", label: "Users", desc: "Admin user management" },
   { to: "/screen", label: "Screen", desc: "Main event display" },
   { to: "/stage", label: "Stage", desc: "Confidence monitor" },
   { to: "/mobile", label: "Mobile", desc: "Attendee view" },
