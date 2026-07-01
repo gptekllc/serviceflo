@@ -3,6 +3,8 @@ import type { Json } from "@/integrations/supabase/types";
 
 export type ItemStatus = "upcoming" | "live" | "completed";
 export type ItemType = "announcement" | "speaker" | "song";
+export type PresentationTarget = "audience" | "stage";
+export type PresentationTargetScope = PresentationTarget | "both";
 
 export interface AnnouncementContent {
   body: string;
@@ -41,7 +43,15 @@ export interface Program {
   id: string;
   name: string;
   isActive: boolean;
+  joinCode: string;
   createdAt: string;
+}
+
+export interface PresentationOutput {
+  programId: string;
+  target: PresentationTarget;
+  itemId: string | null;
+  updatedAt: string;
 }
 
 type Row = {
@@ -64,7 +74,15 @@ type ProgramRow = {
   id: string;
   name: string;
   is_active: boolean;
+  join_code: string;
   created_at: string;
+};
+
+type PresentationOutputRow = {
+  program_id: string;
+  target: PresentationTarget;
+  item_id: string | null;
+  updated_at: string;
 };
 
 function rowToItem(r: Row): ProgramItem {
@@ -90,7 +108,17 @@ function programRowToProgram(r: ProgramRow): Program {
     id: r.id,
     name: r.name,
     isActive: r.is_active,
+    joinCode: r.join_code,
     createdAt: r.created_at,
+  };
+}
+
+function rowToPresentationOutput(r: PresentationOutputRow): PresentationOutput {
+  return {
+    programId: r.program_id,
+    target: r.target,
+    itemId: r.item_id,
+    updatedAt: r.updated_at,
   };
 }
 
@@ -206,6 +234,63 @@ export function subscribeItems(
         } else if (payload.eventType === "DELETE") {
           const oldId = (payload.old as { id?: string }).id;
           if (oldId) current = current.filter((i) => i.id !== oldId);
+        }
+        cb(current);
+      },
+    )
+    .subscribe();
+
+  return () => {
+    cancelled = true;
+    void supabase.removeChannel(channel);
+  };
+}
+
+export function subscribePresentationOutputs(
+  cb: (outputs: PresentationOutput[]) => void,
+  programId: string,
+): () => void {
+  let current: PresentationOutput[] = [];
+  let cancelled = false;
+
+  void (async () => {
+    const { data, error } = await supabase
+      .from("presentation_outputs")
+      .select("*")
+      .eq("program_id", programId);
+    if (cancelled) return;
+    if (error) {
+      console.error("[presentation_outputs] initial load failed:", error);
+      cb([]);
+      return;
+    }
+    current = (data as PresentationOutputRow[]).map(rowToPresentationOutput);
+    cb(current);
+  })();
+
+  const channel = supabase
+    .channel(`presentation_outputs:${programId}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "presentation_outputs",
+        filter: `program_id=eq.${programId}`,
+      },
+      (payload) => {
+        if (payload.eventType === "INSERT") {
+          current = [...current, rowToPresentationOutput(payload.new as PresentationOutputRow)];
+        } else if (payload.eventType === "UPDATE") {
+          const next = rowToPresentationOutput(payload.new as PresentationOutputRow);
+          current = current.map((output) =>
+            output.target === next.target ? next : output,
+          );
+        } else if (payload.eventType === "DELETE") {
+          const oldTarget = (payload.old as { target?: PresentationTarget }).target;
+          if (oldTarget) {
+            current = current.filter((output) => output.target !== oldTarget);
+          }
         }
         cb(current);
       },
@@ -390,6 +475,18 @@ export function visibleAnnouncements(
     });
 }
 
+export function buildDerivedSchedule(items: ProgramItem[]) {
+  let offsetMinutes = 0;
+  return sortItems(items).map((item) => {
+    const startsAtMinute = offsetMinutes;
+    offsetMinutes += Math.max(0, item.duration);
+    return {
+      item,
+      startsAtMinute,
+    };
+  });
+}
+
 export async function reorderItems(orderedIds: string[]) {
   // Two-phase: shift to large offsets first to avoid unique-ish collisions, then assign.
   // We don't have a uniqueness constraint, so a single pass is fine.
@@ -403,33 +500,54 @@ export async function reorderItems(orderedIds: string[]) {
 }
 
 export async function goLive(itemId: string, programId: string) {
-  const { error: e1 } = await supabase
-    .from("program_items")
-    .update({ status: "completed", live_started_at: null })
-    .eq("program_id", programId)
-    .eq("status", "live")
-    .neq("id", itemId);
-  if (e1) throw e1;
-  const { error: e2 } = await supabase
-    .from("program_items")
-    .update({ status: "live", live_started_at: new Date().toISOString() })
-    .eq("id", itemId);
-  if (e2) throw e2;
+  await setPresentationItem(itemId, programId, "audience");
 }
 
 export async function advanceProgram(
   programId: string,
   direction: "next" | "previous",
 ): Promise<string | null> {
-  const { data, error } = await supabase.rpc("advance_program", {
+  return advancePresentation(programId, "audience", direction);
+}
+
+export async function clearLive(programId: string) {
+  await clearPresentationTarget(programId, "audience");
+}
+
+export async function setPresentationItem(
+  itemId: string,
+  programId: string,
+  target: PresentationTargetScope,
+) {
+  const { error } = await supabase.rpc("set_presentation_item", {
     _program_id: programId,
+    _target: target,
+    _item_id: itemId,
+  });
+  if (error) throw error;
+}
+
+export async function clearPresentationTarget(
+  programId: string,
+  target: PresentationTargetScope,
+) {
+  const { error } = await supabase.rpc("clear_presentation_target", {
+    _program_id: programId,
+    _target: target,
+  });
+  if (error) throw error;
+}
+
+export async function advancePresentation(
+  programId: string,
+  target: PresentationTarget,
+  direction: "next" | "previous",
+): Promise<string | null> {
+  const { data, error } = await supabase.rpc("advance_presentation", {
+    _program_id: programId,
+    _target: target,
     _direction: direction,
   });
   if (error) throw error;
   return (data as string | null) ?? null;
-}
-
-export async function clearLive(programId: string) {
-  const { error } = await supabase.rpc("clear_live", { _program_id: programId });
-  if (error) throw error;
 }

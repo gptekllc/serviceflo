@@ -14,6 +14,45 @@ export type Database = {
   }
   public: {
     Tables: {
+      presentation_outputs: {
+        Row: {
+          created_at: string
+          item_id: string | null
+          program_id: string
+          target: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          item_id?: string | null
+          program_id: string
+          target: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          item_id?: string | null
+          program_id?: string
+          target?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "presentation_outputs_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "program_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "presentation_outputs_program_id_fkey"
+            columns: ["program_id"]
+            isOneToOne: false
+            referencedRelation: "programs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       program_items: {
         Row: {
           content: Json
@@ -73,11 +112,38 @@ export type Database = {
           },
         ]
       }
+      program_memberships: {
+        Row: {
+          joined_at: string
+          program_id: string
+          user_id: string
+        }
+        Insert: {
+          joined_at?: string
+          program_id: string
+          user_id: string
+        }
+        Update: {
+          joined_at?: string
+          program_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "program_memberships_program_id_fkey"
+            columns: ["program_id"]
+            isOneToOne: false
+            referencedRelation: "programs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       programs: {
         Row: {
           created_at: string
           id: string
           is_active: boolean
+          join_code: string
           name: string
           updated_at: string
         }
@@ -85,6 +151,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          join_code?: string
           name: string
           updated_at?: string
         }
@@ -92,6 +159,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          join_code?: string
           name?: string
           updated_at?: string
         }
@@ -127,7 +195,15 @@ export type Database = {
         Args: { _direction: string; _program_id: string }
         Returns: string
       }
+      advance_presentation: {
+        Args: { _direction: string; _program_id: string; _target: string }
+        Returns: string | null
+      }
       claim_coordinator_if_first: { Args: never; Returns: boolean }
+      clear_presentation_target: {
+        Args: { _program_id: string; _target: string }
+        Returns: undefined
+      }
       clear_live: { Args: { _program_id: string }; Returns: undefined }
       has_role: {
         Args: {
@@ -135,6 +211,11 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      join_program_by_code: { Args: { _code: string }; Returns: string }
+      set_presentation_item: {
+        Args: { _item_id: string; _program_id: string; _target: string }
+        Returns: undefined
       }
       set_active_program: { Args: { _id: string }; Returns: undefined }
     }

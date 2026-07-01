@@ -19,22 +19,25 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   addItem,
   addItemsBulk,
-  advanceProgram,
-  clearLive,
+  advancePresentation,
+  clearPresentationTarget,
   createProgram,
   deleteItem,
   deleteProgram,
   duplicateItem,
-  goLive,
   renameProgram,
   reorderItems,
+  setPresentationItem,
   setActiveProgram,
   subscribeItems,
+  subscribePresentationOutputs,
   subscribePrograms,
   updateItem,
   type AnnouncementContent,
   type ItemContent,
   type ItemType,
+  type PresentationOutput,
+  type PresentationTarget,
   type Program,
   type ProgramItem,
   type SongContent,
@@ -206,6 +209,7 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
   const [programs, setPrograms] = useState<Program[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [items, setItems] = useState<ProgramItem[]>([]);
+  const [outputs, setOutputs] = useState<PresentationOutput[]>([]);
   const [activeItems, setActiveItems] = useState<ProgramItem[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
@@ -227,6 +231,14 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
       return;
     }
     return subscribeItems(setItems, selectedId);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setOutputs([]);
+      return;
+    }
+    return subscribePresentationOutputs(setOutputs, selectedId);
   }, [selectedId]);
 
   const active = useMemo(
@@ -261,7 +273,7 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto max-w-3xl px-6 py-10">
+      <div className="mx-auto max-w-5xl px-6 py-10">
         <div className="flex items-baseline justify-between gap-4">
           <h1 className="text-3xl font-semibold tracking-tight">
             Event Coordinator
@@ -289,6 +301,7 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
             <PlaybackControls
               program={selected}
               items={items}
+              outputs={outputs}
               onError={setErr}
             />
 
@@ -307,6 +320,7 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
 
             <ItemList
               items={items}
+              outputs={outputs}
               programId={selected.id}
               onError={setErr}
               runSafe={runSafe}
@@ -335,6 +349,7 @@ function ProgramSwitcher({
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
@@ -390,6 +405,17 @@ function ProgramSwitcher({
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleCopyJoinLink = async () => {
+    if (!selected || typeof window === "undefined") return;
+    const link = new URL(
+      `/mobile?code=${encodeURIComponent(selected.joinCode)}`,
+      window.location.origin,
+    ).toString();
+    await navigator.clipboard.writeText(link);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
   };
 
   return (
@@ -489,6 +515,22 @@ function ProgramSwitcher({
           Create
         </button>
       </div>
+      {selected && (
+        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-3 py-3">
+          <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">
+            Join code
+          </div>
+          <div className="font-mono text-lg font-semibold tracking-[0.18em]">
+            {selected.joinCode}
+          </div>
+          <button
+            onClick={() => void handleCopyJoinLink()}
+            className="rounded-md border border-input bg-background px-2 py-1 text-xs hover:bg-accent"
+          >
+            {copied ? "Copied" : "Copy mobile link"}
+          </button>
+        </div>
+      )}
     </section>
   );
 }
@@ -498,14 +540,21 @@ function ProgramSwitcher({
 function PlaybackControls({
   program,
   items,
+  outputs,
   onError,
 }: {
   program: Program;
   items: ProgramItem[];
+  outputs: PresentationOutput[];
   onError: (msg: string | null) => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const live = items.find((i) => i.status === "live");
+  const outputByTarget = useMemo(
+    () => new Map(outputs.map((output) => [output.target, output.itemId])),
+    [outputs],
+  );
+  const audienceItem = items.find((item) => item.id === outputByTarget.get("audience"));
+  const stageItem = items.find((item) => item.id === outputByTarget.get("stage"));
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -521,33 +570,87 @@ function PlaybackControls({
 
   return (
     <section className="sticky top-2 z-20 mt-6 rounded-lg border border-border bg-card/95 p-4 shadow-sm backdrop-blur">
+      <div className="grid gap-3 lg:grid-cols-2">
+        <TargetPlaybackCard
+          target="audience"
+          item={audienceItem}
+          busy={busy}
+          onPrevious={() => void run(() => advancePresentation(program.id, "audience", "previous"))}
+          onClear={() => void run(() => clearPresentationTarget(program.id, "audience"))}
+          onNext={() => void run(() => advancePresentation(program.id, "audience", "next"))}
+        />
+        <TargetPlaybackCard
+          target="stage"
+          item={stageItem}
+          busy={busy}
+          onPrevious={() => void run(() => advancePresentation(program.id, "stage", "previous"))}
+          onClear={() => void run(() => clearPresentationTarget(program.id, "stage"))}
+          onNext={() => void run(() => advancePresentation(program.id, "stage", "next"))}
+        />
+      </div>
+      {!program.isActive && (
+        <div className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+          This program isn't active. Audience and stage routes follow the active program only.
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TargetPlaybackCard({
+  target,
+  item,
+  busy,
+  onPrevious,
+  onClear,
+  onNext,
+}: {
+  target: PresentationTarget;
+  item: ProgramItem | undefined;
+  busy: boolean;
+  onPrevious: () => void;
+  onClear: () => void;
+  onNext: () => void;
+}) {
+  const label = target === "audience" ? "Audience screen" : "Stage screen";
+
+  return (
+    <div className="rounded-lg border border-border bg-background/70 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            {live ? "Live" : "Standby"}
+            {label}
           </div>
           <div className="mt-1 truncate text-base font-semibold">
-            {live?.title ?? "Nothing on screen"}
+            {item?.title ?? `Nothing on ${target}`}
           </div>
-          {live && <LiveCountdown item={live} />}
+          {item ? (
+            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+              <span>{TYPE_LABEL[item.itemType]}</span>
+              <span>{item.duration} min</span>
+            </div>
+          ) : (
+            <div className="mt-1 text-xs text-muted-foreground">Standby</div>
+          )}
+          {target === "audience" && item && <LiveCountdown item={item} />}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => void run(() => advanceProgram(program.id, "previous"))}
-            disabled={busy || !live}
+            onClick={onPrevious}
+            disabled={busy || !item}
             className="rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent disabled:opacity-40"
           >
             ← Previous
           </button>
           <button
-            onClick={() => void run(() => clearLive(program.id))}
-            disabled={busy || !live}
+            onClick={onClear}
+            disabled={busy || !item}
             className="rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent disabled:opacity-40"
           >
-            Standby
+            Clear
           </button>
           <button
-            onClick={() => void run(() => advanceProgram(program.id, "next"))}
+            onClick={onNext}
             disabled={busy}
             className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
@@ -555,12 +658,7 @@ function PlaybackControls({
           </button>
         </div>
       </div>
-      {!program.isActive && (
-        <div className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-          This program isn't active. Set it as active to display on /screen and /mobile.
-        </div>
-      )}
-    </section>
+    </div>
   );
 }
 
@@ -812,11 +910,13 @@ function Textarea({
 
 function ItemList({
   items,
+  outputs,
   programId,
   onError,
   runSafe,
 }: {
   items: ProgramItem[];
+  outputs: PresentationOutput[];
   programId: string;
   onError: (msg: string | null) => void;
   runSafe: (fn: () => Promise<void>) => Promise<void>;
@@ -876,6 +976,7 @@ function ItemList({
                 key={item.id}
                 item={item}
                 index={idx}
+                outputs={outputs}
                 programId={programId}
                 runSafe={runSafe}
               />
@@ -890,11 +991,13 @@ function ItemList({
 function SortableRow({
   item,
   index,
+  outputs,
   programId,
   runSafe,
 }: {
   item: ProgramItem;
   index: number;
+  outputs: PresentationOutput[];
   programId: string;
   runSafe: (fn: () => Promise<void>) => Promise<void>;
 }) {
@@ -906,6 +1009,12 @@ function SortableRow({
     opacity: isDragging ? 0.5 : 1,
   };
   const [editing, setEditing] = useState(false);
+  const audienceLive = outputs.some(
+    (output) => output.target === "audience" && output.itemId === item.id,
+  );
+  const stageLive = outputs.some(
+    (output) => output.target === "stage" && output.itemId === item.id,
+  );
 
   return (
     <li
@@ -954,11 +1063,21 @@ function SortableRow({
                 scheduled {toDateTimeLocalInput(item.publishedAt).replace("T", " ")}
               </span>
             )}
+            {audienceLive && (
+              <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                audience
+              </span>
+            )}
+            {stageLive && (
+              <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+                stage
+              </span>
+            )}
             <span>{item.duration} min</span>
             <StatusBadge status={item.status} />
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center justify-end gap-1">
           <button
             onClick={() => setEditing((v) => !v)}
             className="rounded-md border border-input bg-background px-2 py-1 text-xs hover:bg-accent"
@@ -982,11 +1101,22 @@ function SortableRow({
             Delete
           </button>
           <button
-            onClick={() => void runSafe(() => goLive(item.id, programId))}
-            disabled={item.status === "live"}
-            className="rounded-md bg-foreground px-2 py-1 text-xs font-medium text-background hover:opacity-90 disabled:opacity-40"
+            onClick={() => void runSafe(() => setPresentationItem(item.id, programId, "audience"))}
+            className="rounded-md bg-foreground px-2 py-1 text-xs font-medium text-background hover:opacity-90"
           >
-            {item.status === "live" ? "Live" : "Go Live"}
+            Audience
+          </button>
+          <button
+            onClick={() => void runSafe(() => setPresentationItem(item.id, programId, "stage"))}
+            className="rounded-md border border-emerald-500/40 bg-background px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-400"
+          >
+            Stage
+          </button>
+          <button
+            onClick={() => void runSafe(() => setPresentationItem(item.id, programId, "both"))}
+            className="rounded-md border border-input bg-background px-2 py-1 text-xs font-medium hover:bg-accent"
+          >
+            Both
           </button>
         </div>
       </div>

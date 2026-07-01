@@ -9,13 +9,20 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as StageRouteImport } from './routes/stage'
 import { Route as ScreenRouteImport } from './routes/screen'
 import { Route as MobileRouteImport } from './routes/mobile'
+import { Route as JoinRouteImport } from './routes/join'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 
+const StageRoute = StageRouteImport.update({
+  id: '/stage',
+  path: '/stage',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ScreenRoute = ScreenRouteImport.update({
   id: '/screen',
   path: '/screen',
@@ -24,6 +31,11 @@ const ScreenRoute = ScreenRouteImport.update({
 const MobileRoute = MobileRouteImport.update({
   id: '/mobile',
   path: '/mobile',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JoinRoute = JoinRouteImport.update({
+  id: '/join',
+  path: '/join',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthRoute = AuthRouteImport.update({
@@ -49,15 +61,19 @@ const AuthenticatedAdminRoute = AuthenticatedAdminRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/join': typeof JoinRoute
   '/mobile': typeof MobileRoute
   '/screen': typeof ScreenRoute
+  '/stage': typeof StageRoute
   '/admin': typeof AuthenticatedAdminRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/join': typeof JoinRoute
   '/mobile': typeof MobileRoute
   '/screen': typeof ScreenRoute
+  '/stage': typeof StageRoute
   '/admin': typeof AuthenticatedAdminRoute
 }
 export interface FileRoutesById {
@@ -65,22 +81,27 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/join': typeof JoinRoute
   '/mobile': typeof MobileRoute
   '/screen': typeof ScreenRoute
+  '/stage': typeof StageRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/mobile' | '/screen' | '/admin'
+  fullPaths:
+    '/' | '/auth' | '/join' | '/mobile' | '/screen' | '/stage' | '/admin'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/mobile' | '/screen' | '/admin'
+  to: '/' | '/auth' | '/join' | '/mobile' | '/screen' | '/stage' | '/admin'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
     | '/auth'
+    | '/join'
     | '/mobile'
     | '/screen'
+    | '/stage'
     | '/_authenticated/admin'
   fileRoutesById: FileRoutesById
 }
@@ -88,12 +109,21 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  JoinRoute: typeof JoinRoute
   MobileRoute: typeof MobileRoute
   ScreenRoute: typeof ScreenRoute
+  StageRoute: typeof StageRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/stage': {
+      id: '/stage'
+      path: '/stage'
+      fullPath: '/stage'
+      preLoaderRoute: typeof StageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/screen': {
       id: '/screen'
       path: '/screen'
@@ -106,6 +136,13 @@ declare module '@tanstack/react-router' {
       path: '/mobile'
       fullPath: '/mobile'
       preLoaderRoute: typeof MobileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/join': {
+      id: '/join'
+      path: '/join'
+      fullPath: '/join'
+      preLoaderRoute: typeof JoinRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth': {
@@ -154,8 +191,10 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  JoinRoute: JoinRoute,
   MobileRoute: MobileRoute,
   ScreenRoute: ScreenRoute,
+  StageRoute: StageRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

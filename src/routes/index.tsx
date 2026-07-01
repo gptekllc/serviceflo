@@ -13,7 +13,9 @@ export const Route = createFileRoute("/")({
 const links = [
   { to: "/admin", label: "Admin", desc: "Event coordinator dashboard" },
   { to: "/screen", label: "Screen", desc: "Main event display" },
+  { to: "/stage", label: "Stage", desc: "Confidence monitor" },
   { to: "/mobile", label: "Mobile", desc: "Attendee view" },
+  { to: "/join", label: "Join", desc: "Open an event by code" },
 ] as const;
 
 function Index() {
