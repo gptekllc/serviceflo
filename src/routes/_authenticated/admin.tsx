@@ -20,6 +20,7 @@ import {
   addItem,
   addItemsBulk,
   advancePresentation,
+  clearStageMessage,
   clearPresentationTarget,
   createProgram,
   deleteItem,
@@ -27,11 +28,13 @@ import {
   duplicateItem,
   renameProgram,
   reorderItems,
+  sendStageMessage,
   setPresentationItem,
   setActiveProgram,
   subscribeItems,
   subscribePresentationOutputs,
   subscribePrograms,
+  subscribeStageMessage,
   updateProgramAppearance,
   updateItem,
   uploadProgramImage,
@@ -46,12 +49,12 @@ import {
   type ScreenAspectRatio,
   type SongContent,
   SCREEN_ASPECT_RATIO_OPTIONS,
+  type StageMessage,
   type SpeakerContent,
 } from "@/lib/programs";
 import { parseBulletin, type ParsedItem } from "@/lib/ai-import.functions";
-import { claimCoordinatorIfFirst, getMyRole, type AppRole } from "@/lib/auth.functions";
+import { ensureMyCoordinatorRole } from "@/lib/auth.functions";
 import { supabase } from "@/integrations/supabase/client";
-import { AnnouncementsComposer } from "@/components/admin/AnnouncementsComposer";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/_authenticated/admin")({
@@ -73,7 +76,7 @@ const TYPE_LABEL: Record<ItemType, string> = {
 
 type PushMode = "separate" | "together";
 type CoordinatorSectionKey =
-  "announcements" | "programSwitcher" | "playback" | "smartImport" | "addItem" | "programItems";
+  "stageMessage" | "programSwitcher" | "playback" | "smartImport" | "addItem" | "programItems";
 
 function toDateTimeLocalInput(iso: string | null): string {
   if (!iso) return "";
@@ -103,29 +106,18 @@ function isFutureAnnouncement(item: ProgramItem): boolean {
 
 function AdminPage() {
   const navigate = useNavigate();
-  const fetchMyRole = useServerFn(getMyRole);
-  const ensureCoordinatorRole = useServerFn(claimCoordinatorIfFirst);
+  const ensureCoordinatorRole = useServerFn(ensureMyCoordinatorRole);
 
-  const [role, setRole] = useState<AppRole | null | "loading">("loading");
-
-  const loadRole = async () => {
-    try {
-      const { role } = await fetchMyRole();
-      setRole(role);
-    } catch (e) {
-      console.error(e);
-      setRole(null);
-    }
-  };
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     void (async () => {
       try {
         await ensureCoordinatorRole();
-        await loadRole();
       } catch (e) {
         console.error(e);
-        setRole(null);
+      } finally {
+        setLoading(false);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -136,42 +128,10 @@ function AdminPage() {
     navigate({ to: "/auth", replace: true });
   };
 
-  const handleAdminSignIn = async () => {
-    await supabase.auth.signOut();
-    navigate({ to: "/auth", search: { redirect: "/admin" }, replace: true });
-  };
-
-  if (role === "loading") {
+  if (loading) {
     return (
       <div className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">
         Loading…
-      </div>
-    );
-  }
-
-  if (role !== "coordinator") {
-    return (
-      <div className="min-h-screen bg-background text-foreground">
-        <div className="mx-auto max-w-md px-6 py-16 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">Admin sign-in required</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Sign in with an admin account to manage the program.
-          </p>
-          <div className="mt-6 space-y-3">
-            <button
-              onClick={handleAdminSignIn}
-              className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              Sign in as admin
-            </button>
-            <button
-              onClick={handleSignOut}
-              className="w-full rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
-            >
-              Sign out
-            </button>
-          </div>
-        </div>
       </div>
     );
   }
@@ -184,10 +144,9 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [items, setItems] = useState<ProgramItem[]>([]);
   const [outputs, setOutputs] = useState<PresentationOutput[]>([]);
-  const [activeItems, setActiveItems] = useState<ProgramItem[]>([]);
   const [pushMode, setPushMode] = useState<PushMode>("separate");
   const [openSections, setOpenSections] = useState<Record<CoordinatorSectionKey, boolean>>({
-    announcements: true,
+    stageMessage: true,
     programSwitcher: true,
     playback: true,
     smartImport: true,
@@ -225,17 +184,6 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
   }, [selectedId]);
 
   const active = useMemo(() => programs.find((p) => p.isActive) ?? null, [programs]);
-
-  // Subscribe to active program items only when it differs from selected
-  useEffect(() => {
-    if (!active || active.id === selectedId) {
-      setActiveItems([]);
-      return;
-    }
-    return subscribeItems(setActiveItems, active.id);
-  }, [active, selectedId]);
-
-  const composerItems = active && active.id === selectedId ? items : activeItems;
 
   const selected = useMemo(
     () => programs.find((p) => p.id === selectedId) ?? null,
@@ -282,11 +230,11 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
         <div className="mt-6 grid gap-6 xl:grid-cols-2">
           <div className="min-w-0">
             <CollapsibleSection
-              title="Announcements"
-              open={openSections.announcements}
-              onToggle={() => toggleSection("announcements")}
+              title="Stage message"
+              open={openSections.stageMessage}
+              onToggle={() => toggleSection("stageMessage")}
             >
-              <AnnouncementsComposer activeProgram={active} items={composerItems} />
+              <StageMessagePanel activeProgram={active} />
             </CollapsibleSection>
 
             <CollapsibleSection
@@ -365,6 +313,113 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function StageMessagePanel({ activeProgram }: { activeProgram: Program | null }) {
+  const [message, setMessage] = useState("");
+  const [current, setCurrent] = useState<StageMessage | null>(null);
+  const [busy, setBusy] = useState<"send" | "clear" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const disabled = !activeProgram || busy !== null;
+
+  useEffect(() => {
+    setCurrent(null);
+    setMessage("");
+    if (!activeProgram) return;
+    return subscribeStageMessage(setCurrent, activeProgram.id);
+  }, [activeProgram]);
+
+  const send = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!activeProgram) return;
+    setError(null);
+    setBusy("send");
+    try {
+      await sendStageMessage(activeProgram.id, message);
+      setMessage("");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const clear = async () => {
+    if (!activeProgram) return;
+    setError(null);
+    setBusy("clear");
+    try {
+      await clearStageMessage(activeProgram.id);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section className="mt-6 rounded-lg border border-border bg-card p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Stage-only message
+          </div>
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            {activeProgram
+              ? `Visible on /stage for "${activeProgram.name}" only.`
+              : "Set a program as active to send a stage-only message."}
+          </div>
+        </div>
+        {current?.message && (
+          <button
+            type="button"
+            onClick={() => void clear()}
+            disabled={disabled}
+            className="rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent disabled:opacity-50"
+          >
+            {busy === "clear" ? "Clearing…" : "Clear"}
+          </button>
+        )}
+      </div>
+
+      {current?.message && (
+        <div className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+            Live on stage
+          </div>
+          <div className="mt-1 whitespace-pre-line text-sm text-foreground">{current.message}</div>
+        </div>
+      )}
+
+      <form onSubmit={(event) => void send(event)} className="mt-3 space-y-3">
+        <textarea
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+          rows={4}
+          maxLength={500}
+          placeholder="Type a private stage message..."
+          disabled={disabled}
+          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="text-[10px] tabular-nums text-muted-foreground">{message.length}/500</div>
+          <button
+            type="submit"
+            disabled={disabled || !message.trim()}
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {busy === "send" ? "Sending…" : "Send to stage"}
+          </button>
+        </div>
+      </form>
+
+      {error && (
+        <div className="mt-3 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1721,6 +1776,12 @@ function SortableRow({
                 className="rounded-md border border-emerald-500/40 bg-background px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-400"
               >
                 Stage
+              </button>
+              <button
+                onClick={() => void runSafe(() => setPresentationItem(item.id, programId, "both"))}
+                className="rounded-md border border-input bg-background px-2 py-1 text-xs font-medium hover:bg-accent"
+              >
+                Both
               </button>
             </>
           ) : (

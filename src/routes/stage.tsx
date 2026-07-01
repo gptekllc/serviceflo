@@ -12,12 +12,14 @@ import {
   subscribeItems,
   subscribePresentationOutputs,
   subscribePrograms,
+  subscribeStageMessage,
   type ItemContent,
   type PresentationOutput,
   type Program,
   type ProgramItem,
   type ScreenAspectRatio,
   type SongContent,
+  type StageMessage,
   type SpeakerContent,
 } from "../lib/programs";
 
@@ -40,6 +42,7 @@ function StagePage() {
   const [programs, setPrograms] = useState<Program[]>([]);
   const [items, setItems] = useState<ProgramItem[]>([]);
   const [outputs, setOutputs] = useState<PresentationOutput[]>([]);
+  const [stageMessage, setStageMessage] = useState<StageMessage | null>(null);
   const stageHostRef = useRef<HTMLDivElement | null>(null);
   const panelLayoutRef = useRef<HTMLDivElement | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -70,13 +73,16 @@ function StagePage() {
     if (!active) {
       setItems([]);
       setOutputs([]);
+      setStageMessage(null);
       return;
     }
     const unsubItems = subscribeItems(setItems, active.id);
     const unsubOutputs = subscribePresentationOutputs(setOutputs, active.id);
+    const unsubStageMessage = subscribeStageMessage(setStageMessage, active.id);
     return () => {
       unsubItems();
       unsubOutputs();
+      unsubStageMessage();
     };
   }, [active]);
 
@@ -230,6 +236,7 @@ function StagePage() {
                   {formatClock(now)}
                 </div>
               </div>
+              {stageMessage?.message && <StageMessageBanner message={stageMessage.message} />}
               <div
                 ref={panelLayoutRef}
                 className={`grid min-h-0 flex-1 overflow-hidden ${
@@ -289,6 +296,19 @@ function labelFor(item: ProgramItem) {
   if (item.itemType === "speaker") return "Speaker";
   if (item.itemType === "image") return "Image";
   return "Song";
+}
+
+function StageMessageBanner({ message }: { message: string }) {
+  return (
+    <div className="mb-[clamp(0.35rem,0.8vw,0.8rem)] shrink-0 border border-amber-300/35 bg-amber-300/12 px-[clamp(0.5rem,1.2vw,1.2rem)] py-[clamp(0.35rem,0.85vw,0.75rem)]">
+      <div className="text-[clamp(0.5rem,0.9vw,0.8rem)] font-semibold uppercase tracking-[0.28em] text-amber-200/80">
+        Stage message
+      </div>
+      <div className="mt-[clamp(0.15rem,0.35vw,0.35rem)] max-h-[12vh] overflow-auto whitespace-pre-line text-[clamp(0.85rem,2vw,2.2rem)] font-semibold leading-tight text-amber-50">
+        {message}
+      </div>
+    </div>
+  );
 }
 
 function StageCurrentCard({

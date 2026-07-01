@@ -72,6 +72,13 @@ export interface PresentationOutput {
   updatedAt: string;
 }
 
+export interface StageMessage {
+  programId: string;
+  message: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 type Row = {
   id: string;
   title: string;
@@ -104,6 +111,13 @@ type PresentationOutputRow = {
   program_id: string;
   target: PresentationTarget;
   item_id: string | null;
+  updated_at: string;
+};
+
+type StageMessageRow = {
+  program_id: string;
+  message: string;
+  created_at: string;
   updated_at: string;
 };
 
@@ -144,6 +158,15 @@ function rowToPresentationOutput(r: PresentationOutputRow): PresentationOutput {
     programId: r.program_id,
     target: r.target,
     itemId: r.item_id,
+    updatedAt: r.updated_at,
+  };
+}
+
+function rowToStageMessage(r: StageMessageRow): StageMessage {
+  return {
+    programId: r.program_id,
+    message: r.message,
+    createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
 }
@@ -402,6 +425,70 @@ export function subscribePresentationOutputs(
     cancelled = true;
     void supabase.removeChannel(channel);
   };
+}
+
+export function subscribeStageMessage(
+  cb: (message: StageMessage | null) => void,
+  programId: string,
+): () => void {
+  let cancelled = false;
+
+  const refresh = async () => {
+    const { data, error } = await supabase
+      .from("stage_messages")
+      .select("*")
+      .eq("program_id", programId)
+      .maybeSingle();
+    if (cancelled) return;
+    if (error) {
+      console.error("[stage_messages] load failed:", error);
+      cb(null);
+      return;
+    }
+    cb(data ? rowToStageMessage(data as StageMessageRow) : null);
+  };
+
+  void refresh();
+
+  const channel = supabase
+    .channel(`stage_messages:${programId}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "stage_messages",
+        filter: `program_id=eq.${programId}`,
+      },
+      (payload) => {
+        if (payload.eventType === "DELETE") {
+          cb(null);
+          return;
+        }
+        cb(rowToStageMessage(payload.new as StageMessageRow));
+      },
+    )
+    .subscribe();
+
+  return () => {
+    cancelled = true;
+    void supabase.removeChannel(channel);
+  };
+}
+
+export async function sendStageMessage(programId: string, message: string) {
+  const trimmed = message.trim();
+  if (!trimmed) throw new Error("Message is required");
+  const { error } = await supabase.from("stage_messages").upsert({
+    program_id: programId,
+    message: trimmed,
+  });
+  if (error) throw error;
+}
+
+export async function clearStageMessage(programId: string) {
+  const { error } = await supabase.from("stage_messages").delete().eq("program_id", programId);
+  if (error) throw error;
 }
 
 async function nextOrderIndex(programId: string): Promise<number> {
