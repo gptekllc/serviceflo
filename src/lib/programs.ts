@@ -27,12 +27,14 @@ export interface SongContent {
   lyrics: string;
 }
 export interface ImageContent {
+  kind?: "image" | "pptx";
   imageUrl: string;
   storagePath: string;
   fileName: string;
   mimeType: string;
   fit: "contain" | "cover";
   alt: string;
+  pptxUrl?: string;
 }
 export type ItemContent =
   AnnouncementContent | SpeakerContent | SongContent | ImageContent | Record<string, never>;
@@ -303,6 +305,43 @@ export async function uploadProgramImage(programId: string, file: File): Promise
   };
 }
 
+export async function uploadProgramPowerPoint(
+  programId: string,
+  file: File,
+): Promise<ImageContent> {
+  const safeBase = file.name
+    .replace(/\.[^.]+$/, "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  const id =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const storagePath = `${programId}/${id}-${safeBase || "presentation"}.pptx`;
+  const { error } = await supabase.storage.from("program-images").upload(storagePath, file, {
+    cacheControl: "31536000",
+    contentType:
+      file.type || "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    upsert: false,
+  });
+  if (error) throw error;
+
+  const { data } = supabase.storage.from("program-images").getPublicUrl(storagePath);
+  return {
+    kind: "pptx",
+    imageUrl: "",
+    pptxUrl: data.publicUrl,
+    storagePath,
+    fileName: file.name,
+    mimeType:
+      file.type || "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    fit: "contain",
+    alt: file.name.replace(/\.[^.]+$/, ""),
+  };
+}
+
 // ---------- Items ----------
 
 export function subscribeItems(cb: (items: ProgramItem[]) => void, programId: string): () => void {
@@ -443,36 +482,21 @@ async function broadcastStageMessage(
   payload: { message: string | null; updatedAt: string },
 ) {
   const channel = supabase.channel(`stage_messages:${programId}`);
-
-  await new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timeout);
-      void supabase.removeChannel(channel);
-      if (error) reject(error);
-      else resolve();
-    };
-    const timeout = window.setTimeout(() => finish(new Error("Stage message timed out")), 5000);
-
-    channel.subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        void channel
-          .send({
-            type: "broadcast",
-            event: "stage-message",
-            payload,
-          })
-          .then((result) => {
-            if (result === "ok") finish();
-            else finish(new Error("Stage message could not be sent"));
-          });
-      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-        finish(new Error("Stage message channel failed"));
-      }
-    });
-  });
+  try {
+    const result = await channel.send(
+      {
+        type: "broadcast",
+        event: "stage-message",
+        payload,
+      },
+      { timeout: 10000 },
+    );
+    if (result !== "ok") {
+      throw new Error("Stage message could not be sent");
+    }
+  } finally {
+    void supabase.removeChannel(channel);
+  }
 }
 
 export async function sendStageMessage(programId: string, message: string): Promise<StageMessage> {

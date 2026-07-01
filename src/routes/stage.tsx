@@ -6,6 +6,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { PptxDeckViewer } from "@/components/PptxDeckViewer";
 import {
   type AnnouncementContent,
   type ImageContent,
@@ -236,7 +237,6 @@ function StagePage() {
                   {formatClock(now)}
                 </div>
               </div>
-              {stageMessage?.message && <StageMessageBanner message={stageMessage.message} />}
               <div
                 ref={panelLayoutRef}
                 className={`grid min-h-0 flex-1 overflow-hidden ${
@@ -276,6 +276,7 @@ function StagePage() {
                     etaMinutes={nextQueuedEta}
                     aspectRatio={audienceAspectRatio}
                   />
+                  {stageMessage?.message && <StageMessageBanner message={stageMessage.message} />}
                 </aside>
               </div>
             </main>
@@ -294,17 +295,21 @@ function toCssAspectRatio(ratio: ScreenAspectRatio): string {
 function labelFor(item: ProgramItem) {
   if (item.itemType === "announcement") return "Announcement";
   if (item.itemType === "speaker") return "Speaker";
+  if (item.itemType === "image") {
+    const content = (item.content ?? {}) as Partial<ImageContent>;
+    if (content.kind === "pptx" && content.pptxUrl) return "PowerPoint";
+  }
   if (item.itemType === "image") return "Image";
   return "Song";
 }
 
 function StageMessageBanner({ message }: { message: string }) {
   return (
-    <div className="mb-[clamp(0.35rem,0.8vw,0.8rem)] shrink-0 border border-amber-300/35 bg-amber-300/12 px-[clamp(0.5rem,1.2vw,1.2rem)] py-[clamp(0.35rem,0.85vw,0.75rem)]">
-      <div className="text-[clamp(0.5rem,0.9vw,0.8rem)] font-semibold uppercase tracking-[0.28em] text-amber-200/80">
+    <div className="mt-[clamp(0.5rem,1vw,0.9rem)] shrink-0 border border-yellow-300/40 bg-yellow-300/15 px-[clamp(0.5rem,1.2vw,1.2rem)] py-[clamp(0.4rem,1vw,0.85rem)]">
+      <div className="text-[clamp(0.5rem,0.9vw,0.8rem)] font-semibold uppercase tracking-[0.28em] text-yellow-200/85">
         Stage message
       </div>
-      <div className="mt-[clamp(0.15rem,0.35vw,0.35rem)] max-h-[12vh] overflow-auto whitespace-pre-line text-[clamp(0.85rem,2vw,2.2rem)] font-semibold leading-tight text-amber-50">
+      <div className="mt-[clamp(0.15rem,0.35vw,0.35rem)] max-h-[18vh] overflow-auto whitespace-pre-line text-[clamp(0.75rem,1.6vw,1.45rem)] font-semibold leading-tight text-yellow-50">
         {message}
       </div>
     </div>
@@ -390,6 +395,9 @@ function StageItemContent({ item }: { item: ProgramItem }) {
 
   if (item.itemType === "image") {
     const image = content as Partial<ImageContent>;
+    if (image.kind === "pptx" && image.pptxUrl) {
+      return <PptxDeckViewer url={image.pptxUrl} title={item.title} />;
+    }
     return (
       <div className="h-full min-w-0 overflow-hidden">
         {image.imageUrl ? (

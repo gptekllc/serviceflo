@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
+import { PptxDeckViewer } from "@/components/PptxDeckViewer";
 import {
   subscribePresentationOutputs,
   subscribeItems,
@@ -200,6 +201,9 @@ function LiveBody({ item, embedded = false }: { item: ProgramItem; embedded?: bo
 
   if (item.itemType === "image") {
     const content = (item.content ?? {}) as Partial<ImageContent>;
+    if (content.kind === "pptx" && content.pptxUrl) {
+      return <PptxDeckViewer url={content.pptxUrl} title={item.title} />;
+    }
     return (
       <div className="relative h-full min-h-0 overflow-hidden">
         {content.imageUrl ? (
@@ -334,6 +338,10 @@ function LiveBody({ item, embedded = false }: { item: ProgramItem; embedded?: bo
 function labelFor(item: ProgramItem) {
   if (item.itemType === "announcement") return "Announcement";
   if (item.itemType === "speaker") return "Speaker";
+  if (item.itemType === "image") {
+    const content = (item.content ?? {}) as Partial<ImageContent>;
+    if (content.kind === "pptx" && content.pptxUrl) return "PowerPoint";
+  }
   if (item.itemType === "image") return "Image";
   return "Song";
 }

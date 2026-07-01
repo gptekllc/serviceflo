@@ -38,6 +38,7 @@ import {
   updateProgramAppearance,
   updateItem,
   uploadProgramImage,
+  uploadProgramPowerPoint,
   type AnnouncementContent,
   type ImageContent,
   type ItemContent,
@@ -74,7 +75,17 @@ const TYPE_LABEL: Record<ItemType, string> = {
   image: "Image",
 };
 
+function isPowerPointItem(item: ProgramItem): boolean {
+  const content = (item.content ?? {}) as Partial<ImageContent>;
+  return item.itemType === "image" && content.kind === "pptx" && !!content.pptxUrl;
+}
+
+function itemTypeLabel(item: ProgramItem): string {
+  return isPowerPointItem(item) ? "PowerPoint" : TYPE_LABEL[item.itemType];
+}
+
 type PushMode = "separate" | "together";
+type AddItemKind = ItemType | "pptx";
 type CoordinatorSectionKey =
   "stageMessage" | "programSwitcher" | "playback" | "smartImport" | "addItem" | "programItems";
 
@@ -501,7 +512,7 @@ function ScreenStylePreviewCard({
           {label} preview
         </div>
         <div className={`text-[10px] uppercase tracking-[0.18em] ${mutedClass}`}>
-          {current ? `${TYPE_LABEL[current.itemType]} · ${current.duration}m` : "standby"}
+          {current ? `${itemTypeLabel(current)} · ${current.duration}m` : "standby"}
         </div>
       </div>
 
@@ -548,6 +559,9 @@ function previewItemDetail(item: ProgramItem): string {
   }
   if (item.itemType === "image") {
     const content = (item.content ?? {}) as Partial<ImageContent>;
+    if (isPowerPointItem(item)) {
+      return content.fileName?.trim() || "PowerPoint deck.";
+    }
     return content.fileName?.trim() || content.alt?.trim() || "Uploaded image slide.";
   }
   const content = (item.content ?? {}) as Partial<AnnouncementContent>;
@@ -1237,7 +1251,7 @@ function TargetPlaybackCard({
           </div>
           {item ? (
             <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-              <span>{TYPE_LABEL[item.itemType]}</span>
+              <span>{itemTypeLabel(item)}</span>
               <span>{item.duration} min</span>
             </div>
           ) : (
@@ -1312,7 +1326,7 @@ function AddItemForm({
   programId: string;
   onError: (msg: string | null) => void;
 }) {
-  const [itemType, setItemType] = useState<ItemType>("announcement");
+  const [itemKind, setItemKind] = useState<AddItemKind>("announcement");
   const [title, setTitle] = useState("");
   const [duration, setDuration] = useState("5");
   const [body, setBody] = useState("");
@@ -1324,6 +1338,7 @@ function AddItemForm({
   const [bio, setBio] = useState("");
   const [lyrics, setLyrics] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
+  const [pptxFile, setPptxFile] = useState<File | null>(null);
   const [imageFit, setImageFit] = useState<ImageContent["fit"]>("contain");
   const [imageAlt, setImageAlt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1340,43 +1355,56 @@ function AddItemForm({
     setBio("");
     setLyrics("");
     setImageFile(null);
+    setPptxFile(null);
     setImageFit("contain");
     setImageAlt("");
   };
 
   const handle = async (e: FormEvent) => {
     e.preventDefault();
-    if (!title.trim() && itemType !== "image") return;
-    if (itemType === "image" && !imageFile) {
+    if (!title.trim() && itemKind !== "image" && itemKind !== "pptx") return;
+    if (itemKind === "image" && !imageFile) {
       onError("Choose an image file to upload.");
+      return;
+    }
+    if (itemKind === "pptx" && !pptxFile) {
+      onError("Choose a PowerPoint file to upload.");
       return;
     }
     setBusy(true);
     onError(null);
     try {
       let content: ItemContent;
-      if (itemType === "announcement") content = { body: body.trim() };
-      else if (itemType === "speaker")
+      if (itemKind === "announcement") content = { body: body.trim() };
+      else if (itemKind === "speaker")
         content = { speaker: speaker.trim(), topic: topic.trim(), bio: bio.trim() };
-      else if (itemType === "song") content = { lyrics: lyrics.trim() };
-      else {
+      else if (itemKind === "song") content = { lyrics: lyrics.trim() };
+      else if (itemKind === "image") {
         if (!imageFile) throw new Error("Choose an image file to upload.");
         const uploaded = await uploadProgramImage(programId, imageFile);
         content = {
           ...uploaded,
+          kind: "image",
           fit: imageFit,
           alt: imageAlt.trim() || title.trim() || uploaded.alt,
         };
+      } else {
+        if (!pptxFile) throw new Error("Choose a PowerPoint file to upload.");
+        content = await uploadProgramPowerPoint(programId, pptxFile);
       }
       await addItem(
         {
-          title: title.trim() || imageFile?.name.replace(/\.[^.]+$/, "") || "Image slide",
+          title:
+            title.trim() ||
+            imageFile?.name.replace(/\.[^.]+$/, "") ||
+            pptxFile?.name.replace(/\.[^.]+$/, "") ||
+            "Presentation",
           duration: Number(duration) || 0,
-          itemType,
+          itemType: itemKind === "pptx" ? "image" : itemKind,
           content,
-          publishedAt: itemType === "announcement" ? parseDateTimeLocalInput(publishAt) : null,
-          isPinned: itemType === "announcement" ? isPinned : false,
-          priority: itemType === "announcement" ? Number(priority) || 0 : 0,
+          publishedAt: itemKind === "announcement" ? parseDateTimeLocalInput(publishAt) : null,
+          isPinned: itemKind === "announcement" ? isPinned : false,
+          priority: itemKind === "announcement" ? Number(priority) || 0 : 0,
         },
         programId,
       );
@@ -1406,14 +1434,15 @@ function AddItemForm({
         <div>
           <label className="text-xs font-medium text-muted-foreground">Type</label>
           <select
-            value={itemType}
-            onChange={(e) => setItemType(e.target.value as ItemType)}
+            value={itemKind}
+            onChange={(e) => setItemKind(e.target.value as AddItemKind)}
             className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
           >
             <option value="announcement">Announcement</option>
             <option value="speaker">Speaker</option>
             <option value="song">Song</option>
             <option value="image">Image</option>
+            <option value="pptx">PowerPoint</option>
           </select>
         </div>
         <div>
@@ -1427,7 +1456,7 @@ function AddItemForm({
           />
         </div>
       </div>
-      {itemType === "announcement" && (
+      {itemKind === "announcement" && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
           <div className="sm:col-span-3">
             <Textarea label="Body" value={body} onChange={setBody} rows={3} />
@@ -1460,7 +1489,7 @@ function AddItemForm({
           </div>
         </div>
       )}
-      {itemType === "speaker" && (
+      {itemKind === "speaker" && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <TextInput label="Speaker name" value={speaker} onChange={setSpeaker} />
           <TextInput label="Topic" value={topic} onChange={setTopic} />
@@ -1469,10 +1498,10 @@ function AddItemForm({
           </div>
         </div>
       )}
-      {itemType === "song" && (
+      {itemKind === "song" && (
         <Textarea label="Lyrics" value={lyrics} onChange={setLyrics} rows={6} mono />
       )}
-      {itemType === "image" && (
+      {itemKind === "image" && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_160px]">
           <div>
             <label className="text-xs font-medium text-muted-foreground">Image file</label>
@@ -1508,15 +1537,44 @@ function AddItemForm({
           </div>
         </div>
       )}
+      {itemKind === "pptx" && (
+        <div>
+          <label className="text-xs font-medium text-muted-foreground">PowerPoint file</label>
+          <input
+            type="file"
+            accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            onChange={(e) => {
+              const file = e.target.files?.[0] ?? null;
+              setPptxFile(file);
+              if (file && !title.trim()) {
+                setTitle(file.name.replace(/\.[^.]+$/, ""));
+              }
+            }}
+            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+          />
+          <div className="mt-1 text-xs text-muted-foreground">
+            PPTX files are rendered directly in the browser on /screen and /stage.
+          </div>
+        </div>
+      )}
       <div className="flex justify-end">
         <button
           type="submit"
           disabled={
-            busy || (!title.trim() && itemType !== "image") || (itemType === "image" && !imageFile)
+            busy ||
+            (!title.trim() && itemKind !== "image" && itemKind !== "pptx") ||
+            (itemKind === "image" && !imageFile) ||
+            (itemKind === "pptx" && !pptxFile)
           }
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
-          {busy ? "Adding…" : itemType === "image" ? "Upload image slide" : "Add item"}
+          {busy
+            ? "Adding…"
+            : itemKind === "image"
+              ? "Upload image slide"
+              : itemKind === "pptx"
+                ? "Upload PowerPoint"
+                : "Add item"}
         </button>
       </div>
     </form>
@@ -1710,7 +1768,7 @@ function SortableRow({
           <div className="truncate font-medium">{item.title}</div>
           <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
             <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-secondary-foreground">
-              {TYPE_LABEL[item.itemType]}
+              {itemTypeLabel(item)}
             </span>
             {item.itemType === "announcement" && item.isPinned && (
               <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700">
@@ -1851,6 +1909,19 @@ function EditItemPanel({
       let imageContent: ImageContent;
       if (imageFile) {
         imageContent = await uploadProgramImage(item.programId, imageFile);
+      } else if (c.kind === "pptx" && c.pptxUrl) {
+        imageContent = {
+          kind: "pptx",
+          imageUrl: c.imageUrl ?? "",
+          pptxUrl: c.pptxUrl,
+          storagePath: imageStoragePath,
+          fileName: imageFileName || title.trim() || "Presentation",
+          mimeType:
+            imageMimeType ||
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+          fit: imageFit,
+          alt: imageAlt.trim() || title.trim(),
+        };
       } else if (imageUrl) {
         imageContent = {
           imageUrl,
@@ -1958,11 +2029,18 @@ function EditItemPanel({
       )}
       {itemType === "image" && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_160px]">
-          {imageUrl && (
+          {c.kind === "pptx" && c.pptxUrl ? (
+            <div className="sm:col-span-2 rounded-md border border-border bg-background p-3 text-sm">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                PowerPoint deck
+              </div>
+              <div className="mt-1 truncate">{imageFileName || title}</div>
+            </div>
+          ) : imageUrl ? (
             <div className="sm:col-span-2 overflow-hidden rounded-md border border-border bg-black">
               <img src={imageUrl} alt={imageAlt || title} className="h-40 w-full object-contain" />
             </div>
-          )}
+          ) : null}
           <div>
             <label className="text-xs font-medium text-muted-foreground">Replace image</label>
             <input
@@ -2173,7 +2251,7 @@ function SmartImport({ programId }: { programId: string }) {
                     </span>
                     <span className="flex-1 truncate">{p.title}</span>
                     <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-secondary-foreground">
-                      {TYPE_LABEL[p.itemType]}
+                      {itemTypeLabel(p)}
                     </span>
                     <span className="text-xs text-muted-foreground">{p.duration}m</span>
                   </li>

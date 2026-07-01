@@ -473,7 +473,11 @@ function ImageBody({ item }: { item: ProgramItem }) {
   return (
     <div>
       <h1 className="text-3xl font-semibold leading-tight tracking-tight">{item.title}</h1>
-      {c.imageUrl ? (
+      {c.kind === "pptx" && c.pptxUrl ? (
+        <div className="mt-5 rounded-2xl bg-primary-foreground/10 p-4 text-sm text-primary-foreground/75">
+          PowerPoint presentation is live on the room screen.
+        </div>
+      ) : c.imageUrl ? (
         <img
           src={c.imageUrl}
           alt={c.alt || item.title}
@@ -487,6 +491,10 @@ function ImageBody({ item }: { item: ProgramItem }) {
 }
 
 function labelFor(item: ProgramItem) {
+  if (item.itemType === "image") {
+    const c = (item.content ?? {}) as Partial<ImageContent>;
+    if (c.kind === "pptx" && c.pptxUrl) return "PowerPoint";
+  }
   return TYPE_LABEL[item.itemType ?? "announcement"];
 }
 
