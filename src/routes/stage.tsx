@@ -8,6 +8,7 @@ import {
   type PresentationOutput,
   type Program,
   type ProgramItem,
+  type ScreenAspectRatio,
   type SongContent,
   type SpeakerContent,
 } from "../lib/programs";
@@ -78,10 +79,16 @@ function StagePage() {
       .filter((item) => item.orderIndex > stageItem.orderIndex)
       .slice(0, 3);
   }, [items, stageItem]);
+  const aspectRatio = active?.stageAspectRatio ?? "16:9";
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-50">
-      <div className="mx-auto grid min-h-screen max-w-[1800px] gap-8 px-8 py-10 xl:grid-cols-[minmax(0,1fr)_26rem]">
+    <div className="min-h-screen bg-zinc-950 p-3 text-zinc-50">
+      <div className="mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[2200px] items-center justify-center">
+        <div
+          className="w-full max-h-full overflow-hidden rounded-2xl border border-white/10 shadow-2xl"
+          style={{ aspectRatio: toCssAspectRatio(aspectRatio) }}
+        >
+          <div className="mx-auto grid h-full max-w-[1800px] gap-8 px-8 py-10 xl:grid-cols-[minmax(0,1fr)_26rem]">
         <main className="flex min-h-[70vh] flex-col rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(0,255,196,0.12),transparent_40%),rgba(255,255,255,0.03)] p-8 shadow-2xl">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-5">
             <div>
@@ -200,9 +207,16 @@ function StagePage() {
             </div>
           </div>
         </main>
+          </div>
+        </div>
       </div>
     </div>
   );
+}
+
+function toCssAspectRatio(ratio: ScreenAspectRatio): string {
+  const [w, h] = ratio.split(":");
+  return `${w} / ${h}`;
 }
 
 function StageDetail({ item }: { item: ProgramItem }) {

@@ -5,6 +5,15 @@ export type ItemStatus = "upcoming" | "live" | "completed";
 export type ItemType = "announcement" | "speaker" | "song";
 export type PresentationTarget = "audience" | "stage";
 export type PresentationTargetScope = PresentationTarget | "both";
+export type ScreenAspectRatio = "4:3" | "7:5" | "1:1" | "16:9" | "20:9";
+
+export const SCREEN_ASPECT_RATIO_OPTIONS: ScreenAspectRatio[] = [
+  "4:3",
+  "7:5",
+  "1:1",
+  "16:9",
+  "20:9",
+];
 
 export interface AnnouncementContent {
   body: string;
@@ -44,6 +53,8 @@ export interface Program {
   name: string;
   isActive: boolean;
   joinCode: string;
+  audienceAspectRatio: ScreenAspectRatio;
+  stageAspectRatio: ScreenAspectRatio;
   createdAt: string;
 }
 
@@ -75,6 +86,8 @@ type ProgramRow = {
   name: string;
   is_active: boolean;
   join_code: string;
+  audience_aspect_ratio?: ScreenAspectRatio | null;
+  stage_aspect_ratio?: ScreenAspectRatio | null;
   created_at: string;
 };
 
@@ -109,6 +122,8 @@ function programRowToProgram(r: ProgramRow): Program {
     name: r.name,
     isActive: r.is_active,
     joinCode: r.join_code,
+    audienceAspectRatio: (r.audience_aspect_ratio ?? "16:9") as ScreenAspectRatio,
+    stageAspectRatio: (r.stage_aspect_ratio ?? "16:9") as ScreenAspectRatio,
     createdAt: r.created_at,
   };
 }
@@ -187,6 +202,30 @@ export async function deleteProgram(id: string) {
 
 export async function setActiveProgram(id: string) {
   const { error } = await supabase.rpc("set_active_program", { _id: id });
+  if (error) throw error;
+}
+
+export async function updateProgramAspectRatios(
+  id: string,
+  input: {
+    audienceAspectRatio?: ScreenAspectRatio;
+    stageAspectRatio?: ScreenAspectRatio;
+  },
+) {
+  const updates: {
+    audience_aspect_ratio?: ScreenAspectRatio;
+    stage_aspect_ratio?: ScreenAspectRatio;
+  } = {};
+
+  if (input.audienceAspectRatio) {
+    updates.audience_aspect_ratio = input.audienceAspectRatio;
+  }
+  if (input.stageAspectRatio) {
+    updates.stage_aspect_ratio = input.stageAspectRatio;
+  }
+  if (Object.keys(updates).length === 0) return;
+
+  const { error } = await supabase.from("programs").update(updates).eq("id", id);
   if (error) throw error;
 }
 

@@ -140,27 +140,33 @@ export type Database = {
       }
       programs: {
         Row: {
+          audience_aspect_ratio: string
           created_at: string
           id: string
           is_active: boolean
           join_code: string
           name: string
+          stage_aspect_ratio: string
           updated_at: string
         }
         Insert: {
+          audience_aspect_ratio?: string
           created_at?: string
           id?: string
           is_active?: boolean
           join_code?: string
           name: string
+          stage_aspect_ratio?: string
           updated_at?: string
         }
         Update: {
+          audience_aspect_ratio?: string
           created_at?: string
           id?: string
           is_active?: boolean
           join_code?: string
           name?: string
+          stage_aspect_ratio?: string
           updated_at?: string
         }
         Relationships: []

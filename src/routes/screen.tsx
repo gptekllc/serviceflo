@@ -9,6 +9,7 @@ import {
   type PresentationOutput,
   type Program,
   type ProgramItem,
+  type ScreenAspectRatio,
   type SongContent,
   type SpeakerContent,
   visibleAnnouncements,
@@ -71,6 +72,7 @@ function ScreenPage() {
     () => visibleAnnouncements(items, now).slice(0, 4),
     [items, now],
   );
+  const aspectRatio = active?.audienceAspectRatio ?? "16:9";
   const mobileUrl = useMemo(() => {
     if (!active) return null;
     const path = `/mobile?code=${encodeURIComponent(active.joinCode)}`;
@@ -79,8 +81,13 @@ function ScreenPage() {
   }, [active]);
 
   return (
-    <div className="min-h-screen bg-[#05070b] text-white">
-      <div className="mx-auto flex min-h-screen max-w-[1800px] flex-col px-8 py-8">
+    <div className="min-h-screen bg-[#05070b] p-3 text-white">
+      <div className="mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[2200px] items-center justify-center">
+        <div
+          className="w-full max-h-full overflow-hidden rounded-2xl border border-white/10 shadow-2xl"
+          style={{ aspectRatio: toCssAspectRatio(aspectRatio) }}
+        >
+          <div className="mx-auto flex h-full max-w-[1800px] flex-col px-8 py-8">
         <header className="flex items-center justify-between gap-6 border-b border-white/10 pb-5">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.35em] text-cyan-300/85">
@@ -208,9 +215,16 @@ function ScreenPage() {
             </ul>
           </section>
         )}
+          </div>
+        </div>
       </div>
     </div>
   );
+}
+
+function toCssAspectRatio(ratio: ScreenAspectRatio): string {
+  const [w, h] = ratio.split(":");
+  return `${w} / ${h}`;
 }
 
 function AnnouncementRailCard({
