@@ -20,6 +20,7 @@ import {
   addItem,
   addItemsBulk,
   advancePresentation,
+  countPowerPointSlides,
   clearStageMessage,
   clearPresentationTarget,
   createProgram,
@@ -30,6 +31,7 @@ import {
   reorderItems,
   sendStageMessage,
   setPresentationItem,
+  setPresentationSlideIndex,
   setActiveProgram,
   subscribeItems,
   subscribePresentationOutputs,
@@ -241,14 +243,6 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
         <div className="mt-6 grid gap-6 xl:grid-cols-2">
           <div className="min-w-0">
             <CollapsibleSection
-              title="Stage message"
-              open={openSections.stageMessage}
-              onToggle={() => toggleSection("stageMessage")}
-            >
-              <StageMessagePanel activeProgram={active} />
-            </CollapsibleSection>
-
-            <CollapsibleSection
               title="Program settings"
               open={openSections.programSwitcher}
               onToggle={() => toggleSection("programSwitcher")}
@@ -264,34 +258,11 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
             {selected && (
               <>
                 <CollapsibleSection
-                  title="Playback controls"
-                  open={openSections.playback}
-                  onToggle={() => toggleSection("playback")}
-                >
-                  <PlaybackControls
-                    program={selected}
-                    items={items}
-                    outputs={outputs}
-                    pushMode={pushMode}
-                    onPushModeChange={setPushMode}
-                    onError={setErr}
-                  />
-                </CollapsibleSection>
-
-                <CollapsibleSection
                   title="Smart import"
                   open={openSections.smartImport}
                   onToggle={() => toggleSection("smartImport")}
                 >
                   <SmartImport programId={selected.id} />
-                </CollapsibleSection>
-
-                <CollapsibleSection
-                  title="Add item"
-                  open={openSections.addItem}
-                  onToggle={() => toggleSection("addItem")}
-                >
-                  <AddItemForm programId={selected.id} onError={setErr} />
                 </CollapsibleSection>
 
                 {err && (
@@ -314,12 +285,40 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
                     runSafe={runSafe}
                   />
                 </CollapsibleSection>
+
+                <CollapsibleSection
+                  title="Add item"
+                  open={openSections.addItem}
+                  onToggle={() => toggleSection("addItem")}
+                >
+                  <AddItemForm programId={selected.id} onError={setErr} />
+                </CollapsibleSection>
+
+                <CollapsibleSection
+                  title="Playback controls"
+                  open={openSections.playback}
+                  onToggle={() => toggleSection("playback")}
+                >
+                  <PlaybackControls
+                    program={selected}
+                    items={items}
+                    outputs={outputs}
+                    pushMode={pushMode}
+                    onPushModeChange={setPushMode}
+                    onError={setErr}
+                  />
+                </CollapsibleSection>
               </>
             )}
           </div>
 
           <aside className="min-w-0 space-y-4 xl:sticky xl:top-6 xl:h-fit">
-            <LivePreviewPanel activeProgram={active} />
+            <LivePreviewPanel
+              activeProgram={active}
+              stageMessageOpen={openSections.stageMessage}
+              onStageMessageToggle={() => toggleSection("stageMessage")}
+              onError={setErr}
+            />
           </aside>
         </div>
       </div>
@@ -575,12 +574,23 @@ function nextQueuedItems(items: ProgramItem[], fromOrderIndex: number | null): P
   return ordered.filter((item) => item.orderIndex > fromOrderIndex).slice(0, 3);
 }
 
-function LivePreviewPanel({ activeProgram }: { activeProgram: Program | null }) {
+function LivePreviewPanel({
+  activeProgram,
+  stageMessageOpen,
+  onStageMessageToggle,
+  onError,
+}: {
+  activeProgram: Program | null;
+  stageMessageOpen: boolean;
+  onStageMessageToggle: () => void;
+  onError: (msg: string | null) => void;
+}) {
   const [popout, setPopout] = useState<{
     label: "Audience" | "Stage";
     src: "/screen" | "/stage";
     aspectRatio: ScreenAspectRatio;
   } | null>(null);
+  const [appearanceOpen, setAppearanceOpen] = useState(true);
 
   return (
     <>
@@ -608,6 +618,37 @@ function LivePreviewPanel({ activeProgram }: { activeProgram: Program | null }) 
             aspectRatio={activeProgram?.stageAspectRatio ?? "16:9"}
             onPopOut={(payload) => setPopout(payload)}
           />
+          <CollapsibleSection
+            title="Stage message"
+            open={stageMessageOpen}
+            onToggle={onStageMessageToggle}
+          >
+            <StageMessagePanel activeProgram={activeProgram} />
+          </CollapsibleSection>
+          {activeProgram && (
+            <div className="overflow-hidden rounded-lg border border-border bg-background">
+              <button
+                type="button"
+                onClick={() => setAppearanceOpen((open) => !open)}
+                className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left hover:bg-accent"
+              >
+                <span className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  Screen appearance
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {appearanceOpen ? "Hide" : "Show"}
+                </span>
+              </button>
+              {appearanceOpen && (
+                <ScreenRatioControls
+                  program={activeProgram}
+                  disabled={false}
+                  onError={onError}
+                  className="border-t border-border bg-background/70 p-3"
+                />
+              )}
+            </div>
+          )}
         </div>
       </section>
 
@@ -965,11 +1006,11 @@ function PlaybackControls({
 }) {
   const [busy, setBusy] = useState(false);
   const outputByTarget = useMemo(
-    () => new Map(outputs.map((output) => [output.target, output.itemId])),
+    () => new Map(outputs.map((output) => [output.target, output])),
     [outputs],
   );
-  const audienceItem = items.find((item) => item.id === outputByTarget.get("audience"));
-  const stageItem = items.find((item) => item.id === outputByTarget.get("stage"));
+  const audienceOutput = outputByTarget.get("audience");
+  const audienceItem = items.find((item) => item.id === audienceOutput?.itemId);
 
   const runCombinedAdvance = async (direction: "next" | "previous") => {
     const nextId = await advancePresentation(program.id, "audience", direction);
@@ -1029,12 +1070,11 @@ function PlaybackControls({
         </div>
       </div>
 
-      <ScreenRatioControls program={program} disabled={busy} onError={onError} />
-
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid gap-3">
         <TargetPlaybackCard
           target="audience"
           item={audienceItem}
+          output={audienceOutput}
           busy={busy}
           onPrevious={() =>
             void run(() =>
@@ -1055,28 +1095,13 @@ function PlaybackControls({
                 : advancePresentation(program.id, "audience", "next"),
             )
           }
-        />
-        <TargetPlaybackCard
-          target="stage"
-          item={stageItem}
-          busy={busy}
-          onPrevious={() =>
+          onSetSlideIndex={(slideIndex) =>
             void run(() =>
-              pushMode === "together"
-                ? runCombinedAdvance("previous")
-                : advancePresentation(program.id, "stage", "previous"),
-            )
-          }
-          onClear={() =>
-            void run(() =>
-              clearPresentationTarget(program.id, pushMode === "together" ? "both" : "stage"),
-            )
-          }
-          onNext={() =>
-            void run(() =>
-              pushMode === "together"
-                ? runCombinedAdvance("next")
-                : advancePresentation(program.id, "stage", "next"),
+              setPresentationSlideIndex(
+                program.id,
+                pushMode === "together" ? "both" : "audience",
+                slideIndex,
+              ),
             )
           }
         />
@@ -1094,10 +1119,12 @@ function ScreenRatioControls({
   program,
   disabled,
   onError,
+  className = "mb-4 rounded-lg border border-border bg-background/70 p-3",
 }: {
   program: Program;
   disabled: boolean;
   onError: (msg: string | null) => void;
+  className?: string;
 }) {
   const [saving, setSaving] = useState(false);
 
@@ -1116,7 +1143,7 @@ function ScreenRatioControls({
   const isDisabled = disabled || saving;
 
   return (
-    <div className="mb-4 rounded-lg border border-border bg-background/70 p-3">
+    <div className={className}>
       <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Screen appearance
       </div>
@@ -1225,17 +1252,21 @@ function ScreenRatioControls({
 function TargetPlaybackCard({
   target,
   item,
+  output,
   busy,
   onPrevious,
   onClear,
   onNext,
+  onSetSlideIndex,
 }: {
   target: PresentationTarget;
   item: ProgramItem | undefined;
+  output: PresentationOutput | undefined;
   busy: boolean;
   onPrevious: () => void;
   onClear: () => void;
   onNext: () => void;
+  onSetSlideIndex: (slideIndex: number) => void;
 }) {
   const label = target === "audience" ? "Audience screen" : "Stage screen";
 
@@ -1280,6 +1311,120 @@ function TargetPlaybackCard({
             className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
             Next →
+          </button>
+        </div>
+      </div>
+      {item && isPowerPointItem(item) && (
+        <PowerPointSlideControls
+          item={item}
+          output={output}
+          busy={busy}
+          onSetSlideIndex={onSetSlideIndex}
+        />
+      )}
+    </div>
+  );
+}
+
+function PowerPointSlideControls({
+  item,
+  output,
+  busy,
+  onSetSlideIndex,
+}: {
+  item: ProgramItem;
+  output: PresentationOutput | undefined;
+  busy: boolean;
+  onSetSlideIndex: (slideIndex: number) => void;
+}) {
+  const content = useMemo(() => (item.content ?? {}) as Partial<ImageContent>, [item.content]);
+  const savedSlideCount = typeof content.slideCount === "number" ? content.slideCount : 0;
+  const [detectedSlideCount, setDetectedSlideCount] = useState(savedSlideCount);
+  const [isReadingSlides, setIsReadingSlides] = useState(false);
+  const slideCount = savedSlideCount || detectedSlideCount;
+  const slideIndex = Math.min(Math.max(output?.slideIndex ?? 0, 0), Math.max(slideCount - 1, 0));
+  const canControlSlides = !busy && slideCount > 1;
+  const canGoPrevious = canControlSlides && slideIndex > 0;
+  const canGoNext = canControlSlides && slideIndex < slideCount - 1;
+
+  useEffect(() => {
+    setDetectedSlideCount(savedSlideCount);
+  }, [savedSlideCount, item.id]);
+
+  useEffect(() => {
+    if (savedSlideCount || !content.pptxUrl) return;
+    let cancelled = false;
+    setIsReadingSlides(true);
+    void (async () => {
+      try {
+        const response = await fetch(content.pptxUrl as string);
+        if (!response.ok) throw new Error("Could not read PowerPoint");
+        const count = await countPowerPointSlides(await response.arrayBuffer());
+        if (cancelled) return;
+        setDetectedSlideCount(count);
+        if (count > 0) {
+          await updateItem(item.id, {
+            content: { ...(content as ImageContent), slideCount: count },
+          });
+        }
+      } catch (error) {
+        console.error("[pptx] slide count failed:", error);
+      } finally {
+        if (!cancelled) setIsReadingSlides(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [content, item.id, savedSlideCount]);
+
+  return (
+    <div className="mt-4 rounded-md border border-border bg-card px-3 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            PowerPoint slides
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {slideCount > 0
+              ? `Slide ${slideIndex + 1} of ${slideCount}`
+              : isReadingSlides
+                ? "Reading slide count..."
+                : "Slide count unavailable"}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onSetSlideIndex(0)}
+            disabled={!canGoPrevious}
+            className="rounded-md border border-input bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-accent disabled:opacity-40"
+          >
+            First
+          </button>
+          <button
+            type="button"
+            onClick={() => onSetSlideIndex(slideIndex - 1)}
+            disabled={!canGoPrevious}
+            className="rounded-md border border-input bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-accent disabled:opacity-40"
+          >
+            Previous slide
+          </button>
+          <button
+            type="button"
+            onClick={() => onSetSlideIndex(slideIndex + 1)}
+            disabled={!canGoNext}
+            className="rounded-md border border-input bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-accent disabled:opacity-40"
+          >
+            Next slide
+          </button>
+          <button
+            type="button"
+            onClick={() => onSetSlideIndex(slideCount - 1)}
+            disabled={!canGoNext}
+            className="rounded-md border border-input bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-accent disabled:opacity-40"
+          >
+            Last
           </button>
         </div>
       </div>

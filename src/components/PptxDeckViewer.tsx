@@ -12,18 +12,27 @@ export function PptxDeckViewer({
   title,
   controls = true,
   keyboard = true,
+  slideIndex: controlledSlideIndex,
+  onSlideCountChange,
 }: {
   url: string;
   title: string;
   controls?: boolean;
   keyboard?: boolean;
+  slideIndex?: number;
+  onSlideCountChange?: (slideCount: number) => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<PptxViewerInstance | null>(null);
+  const onSlideCountChangeRef = useRef(onSlideCountChange);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
   const [slideIndex, setSlideIndex] = useState(0);
   const [slideCount, setSlideCount] = useState(0);
+
+  useEffect(() => {
+    onSlideCountChangeRef.current = onSlideCountChange;
+  }, [onSlideCountChange]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -65,6 +74,7 @@ export function PptxDeckViewer({
 
         viewerRef.current = viewer;
         setSlideCount(viewer.slideCount);
+        onSlideCountChangeRef.current?.(viewer.slideCount);
         setSlideIndex(viewer.currentSlideIndex);
         setStatus("ready");
       } catch (err) {
@@ -93,6 +103,11 @@ export function PptxDeckViewer({
     },
     [slideCount],
   );
+
+  useEffect(() => {
+    if (controlledSlideIndex === undefined || status !== "ready") return;
+    void goTo(controlledSlideIndex);
+  }, [controlledSlideIndex, goTo, status]);
 
   useEffect(() => {
     if (!keyboard) return;

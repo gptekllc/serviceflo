@@ -57,10 +57,11 @@ function ScreenPage() {
     };
   }, [active]);
 
-  const audienceItemId = useMemo(
-    () => outputs.find((output) => output.target === "audience")?.itemId ?? null,
+  const audienceOutput = useMemo(
+    () => outputs.find((output) => output.target === "audience") ?? null,
     [outputs],
   );
+  const audienceItemId = audienceOutput?.itemId ?? null;
   const live = useMemo(
     () =>
       items.find((item) => item.id === audienceItemId) ??
@@ -160,7 +161,11 @@ function ScreenPage() {
               >
                 {live ? (
                   <div className="min-h-0 flex flex-1 flex-col overflow-auto">
-                    <LiveBody item={live} embedded={isEmbedded} />
+                    <LiveBody
+                      item={live}
+                      embedded={isEmbedded}
+                      slideIndex={live.id === audienceItemId ? audienceOutput?.slideIndex : 0}
+                    />
                   </div>
                 ) : (
                   <div className="grid flex-1 place-items-center text-center">
@@ -194,7 +199,15 @@ function toCssAspectRatio(ratio: ScreenAspectRatio): string {
   return `${w} / ${h}`;
 }
 
-function LiveBody({ item, embedded = false }: { item: ProgramItem; embedded?: boolean }) {
+function LiveBody({
+  item,
+  embedded = false,
+  slideIndex = 0,
+}: {
+  item: ProgramItem;
+  embedded?: boolean;
+  slideIndex?: number;
+}) {
   const badgeClass = embedded
     ? "w-fit rounded-full bg-white/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-white/55"
     : "w-fit rounded-full bg-white/[0.04] px-4 py-2 text-xs uppercase tracking-[0.25em] text-white/55";
@@ -202,7 +215,15 @@ function LiveBody({ item, embedded = false }: { item: ProgramItem; embedded?: bo
   if (item.itemType === "image") {
     const content = (item.content ?? {}) as Partial<ImageContent>;
     if (content.kind === "pptx" && content.pptxUrl) {
-      return <PptxDeckViewer url={content.pptxUrl} title={item.title} />;
+      return (
+        <PptxDeckViewer
+          url={content.pptxUrl}
+          title={item.title}
+          controls={false}
+          keyboard={false}
+          slideIndex={slideIndex}
+        />
+      );
     }
     return (
       <div className="relative h-full min-h-0 overflow-hidden">

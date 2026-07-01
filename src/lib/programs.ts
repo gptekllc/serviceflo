@@ -35,6 +35,7 @@ export interface ImageContent {
   fit: "contain" | "cover";
   alt: string;
   pptxUrl?: string;
+  slideCount?: number;
 }
 export type ItemContent =
   AnnouncementContent | SpeakerContent | SongContent | ImageContent | Record<string, never>;
@@ -71,6 +72,7 @@ export interface PresentationOutput {
   programId: string;
   target: PresentationTarget;
   itemId: string | null;
+  slideIndex: number;
   updatedAt: string;
 }
 
@@ -113,6 +115,7 @@ type PresentationOutputRow = {
   program_id: string;
   target: PresentationTarget;
   item_id: string | null;
+  slide_index?: number | null;
   updated_at: string;
 };
 
@@ -153,6 +156,7 @@ function rowToPresentationOutput(r: PresentationOutputRow): PresentationOutput {
     programId: r.program_id,
     target: r.target,
     itemId: r.item_id,
+    slideIndex: r.slide_index ?? 0,
     updatedAt: r.updated_at,
   };
 }
@@ -309,6 +313,7 @@ export async function uploadProgramPowerPoint(
   programId: string,
   file: File,
 ): Promise<ImageContent> {
+  const slideCount = await countPowerPointSlides(file);
   const safeBase = file.name
     .replace(/\.[^.]+$/, "")
     .trim()
@@ -339,7 +344,17 @@ export async function uploadProgramPowerPoint(
       file.type || "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     fit: "contain",
     alt: file.name.replace(/\.[^.]+$/, ""),
+    slideCount,
   };
+}
+
+export async function countPowerPointSlides(input: Blob | ArrayBuffer): Promise<number> {
+  const [{ default: JSZip }, buffer] = await Promise.all([
+    import("jszip"),
+    input instanceof Blob ? input.arrayBuffer() : Promise.resolve(input),
+  ]);
+  const zip = await JSZip.loadAsync(buffer);
+  return Object.keys(zip.files).filter((path) => /^ppt\/slides\/slide\d+\.xml$/i.test(path)).length;
 }
 
 // ---------- Items ----------
@@ -738,4 +753,17 @@ export async function advancePresentation(
   });
   if (error) throw error;
   return (data as string | null) ?? null;
+}
+
+export async function setPresentationSlideIndex(
+  programId: string,
+  target: PresentationTargetScope,
+  slideIndex: number,
+) {
+  const { error } = await supabase.rpc("set_presentation_slide_index", {
+    _program_id: programId,
+    _target: target,
+    _slide_index: Math.max(0, Math.floor(slideIndex)),
+  });
+  if (error) throw error;
 }

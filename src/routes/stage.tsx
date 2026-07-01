@@ -88,21 +88,28 @@ function StagePage() {
   }, [active]);
 
   const outputByTarget = useMemo(
-    () => new Map(outputs.map((output) => [output.target, output.itemId])),
+    () => new Map(outputs.map((output) => [output.target, output])),
     [outputs],
   );
+  const stageOutput = outputByTarget.get("stage") ?? null;
+  const audienceOutput = outputByTarget.get("audience") ?? null;
   const stageItem = useMemo(
-    () => items.find((item) => item.id === outputByTarget.get("stage")),
-    [items, outputByTarget],
+    () => items.find((item) => item.id === stageOutput?.itemId),
+    [items, stageOutput],
   );
   const audienceItem = useMemo(
-    () => items.find((item) => item.id === outputByTarget.get("audience")),
-    [items, outputByTarget],
+    () => items.find((item) => item.id === audienceOutput?.itemId),
+    [items, audienceOutput],
   );
   const currentItem = useMemo(
-    () => audienceItem ?? items.find((item) => item.status === "live") ?? stageItem,
+    () => stageItem ?? audienceItem ?? items.find((item) => item.status === "live"),
     [audienceItem, items, stageItem],
   );
+  const currentOutputStartedAt = useMemo(() => {
+    if (currentItem && stageOutput?.itemId === currentItem.id) return stageOutput.updatedAt;
+    if (currentItem && audienceOutput?.itemId === currentItem.id) return audienceOutput.updatedAt;
+    return currentItem?.liveStartedAt ?? null;
+  }, [audienceOutput, currentItem, stageOutput]);
   const nextQueued = useMemo(() => {
     if (!currentItem) return items[0] ?? null;
     return items.find((item) => item.orderIndex > currentItem.orderIndex) ?? null;
@@ -232,7 +239,10 @@ function StagePage() {
               className="flex h-full min-h-0 flex-col rounded-[2rem] bg-[radial-gradient(circle_at_top,rgba(0,255,196,0.12),transparent_40%),rgba(255,255,255,0.03)] p-[clamp(0.12rem,0.45vw,0.3rem)] shadow-2xl"
               style={{ backgroundColor }}
             >
-              <div className="flex shrink-0 items-center justify-end px-1 pb-[clamp(0.2rem,0.55vw,0.55rem)] pt-1">
+              <div className="flex shrink-0 items-center justify-between gap-4 px-1 pb-[clamp(0.2rem,0.55vw,0.55rem)] pt-1">
+                <div className="font-mono text-[clamp(1rem,2.1vw,2rem)] font-semibold tabular-nums text-zinc-200">
+                  {formatStageTimer(currentOutputStartedAt, now)}
+                </div>
                 <div className="font-mono text-[clamp(1rem,2.1vw,2rem)] font-semibold tabular-nums text-zinc-200">
                   {formatClock(now)}
                 </div>
@@ -252,7 +262,17 @@ function StagePage() {
                       Current
                     </div>
                   </div>
-                  <StageCurrentCard item={currentItem} aspectRatio={audienceAspectRatio} />
+                  <StageCurrentCard
+                    item={currentItem}
+                    aspectRatio={audienceAspectRatio}
+                    slideIndex={
+                      currentItem && audienceOutput?.itemId === currentItem.id
+                        ? (audienceOutput?.slideIndex ?? 0)
+                        : currentItem && stageOutput?.itemId === currentItem.id
+                          ? (stageOutput?.slideIndex ?? 0)
+                          : 0
+                    }
+                  />
                 </section>
 
                 <button
@@ -319,9 +339,11 @@ function StageMessageBanner({ message }: { message: string }) {
 function StageCurrentCard({
   item,
   aspectRatio,
+  slideIndex,
 }: {
   item: ProgramItem | undefined;
   aspectRatio: ScreenAspectRatio;
+  slideIndex: number;
 }) {
   return (
     <section
@@ -329,7 +351,7 @@ function StageCurrentCard({
       style={{ aspectRatio: toCssAspectRatio(aspectRatio) }}
     >
       {item ? (
-        <StageItemContent item={item} />
+        <StageItemContent item={item} slideIndex={slideIndex} />
       ) : (
         <div className="grid h-full place-items-center p-[clamp(0.75rem,5cqw,2.5rem)] text-center">
           <div>
@@ -386,7 +408,7 @@ function StageUpNextCard({
   );
 }
 
-function StageItemContent({ item }: { item: ProgramItem }) {
+function StageItemContent({ item, slideIndex }: { item: ProgramItem; slideIndex: number }) {
   const content = (item.content ?? {}) as ItemContent;
   const labelClass =
     "w-fit rounded-full bg-white/[0.04] px-[clamp(0.4rem,1.7cqw,1rem)] py-[clamp(0.2rem,0.8cqw,0.5rem)] text-[clamp(0.45rem,1.45cqw,0.85rem)] uppercase text-white/55";
@@ -396,7 +418,15 @@ function StageItemContent({ item }: { item: ProgramItem }) {
   if (item.itemType === "image") {
     const image = content as Partial<ImageContent>;
     if (image.kind === "pptx" && image.pptxUrl) {
-      return <PptxDeckViewer url={image.pptxUrl} title={item.title} />;
+      return (
+        <PptxDeckViewer
+          url={image.pptxUrl}
+          title={item.title}
+          controls={false}
+          keyboard={false}
+          slideIndex={slideIndex}
+        />
+      );
     }
     return (
       <div className="h-full min-w-0 overflow-hidden">
@@ -483,6 +513,17 @@ function formatClock(now: number): string {
     minute: "2-digit",
     second: "2-digit",
   }).format(now);
+}
+
+function formatStageTimer(startedAt: string | null, now: number): string {
+  if (!startedAt) return "00:00";
+  const elapsedMs = Math.max(0, now - new Date(startedAt).getTime());
+  const totalSeconds = Math.floor(elapsedMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60)
+    .toString()
+    .padStart(2, "0");
+  const seconds = (totalSeconds % 60).toString().padStart(2, "0");
+  return `${minutes}:${seconds}`;
 }
 
 function clamp(value: number, min: number, max: number): number {
