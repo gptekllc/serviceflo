@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { QRCodeSVG } from "qrcode.react";
+import { z } from "zod";
 import {
   subscribePresentationOutputs,
   subscribeItems,
@@ -12,11 +12,12 @@ import {
   type ScreenAspectRatio,
   type SongContent,
   type SpeakerContent,
-  visibleAnnouncements,
-  visibleUpcomingItems,
 } from "../lib/programs";
 
 export const Route = createFileRoute("/screen")({
+  validateSearch: z.object({
+    embed: z.number().optional(),
+  }),
   head: () => ({
     meta: [
       { title: "Screen — Live Program" },
@@ -30,16 +31,13 @@ function ScreenPage() {
   const [programs, setPrograms] = useState<Program[]>([]);
   const [items, setItems] = useState<ProgramItem[]>([]);
   const [outputs, setOutputs] = useState<PresentationOutput[]>([]);
-  const [now, setNow] = useState(() => Date.now());
   const screenHostRef = useRef<HTMLDivElement | null>(null);
   const screenFrameRef = useRef<HTMLDivElement | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const { embed } = Route.useSearch();
+  const isEmbedded = embed === 1;
 
   useEffect(() => subscribePrograms(setPrograms), []);
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 15_000);
-    return () => clearInterval(id);
-  }, []);
 
   const active = useMemo(() => programs.find((p) => p.isActive), [programs]);
 
@@ -67,21 +65,7 @@ function ScreenPage() {
       items.find((item) => item.status === "live"),
     [items, audienceItemId],
   );
-  const upcoming = useMemo(
-    () => visibleUpcomingItems(items, now).slice(0, 2),
-    [items, now],
-  );
-  const announcements = useMemo(
-    () => visibleAnnouncements(items, now).slice(0, 4),
-    [items, now],
-  );
   const aspectRatio = active?.audienceAspectRatio ?? "16:9";
-  const mobileUrl = useMemo(() => {
-    if (!active) return null;
-    const path = `/mobile?code=${encodeURIComponent(active.joinCode)}`;
-    if (typeof window === "undefined") return path;
-    return new URL(path, window.location.origin).toString();
-  }, [active]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -115,128 +99,83 @@ function ScreenPage() {
   };
 
   return (
-    <div className="group relative min-h-screen bg-[#05070b] p-3 text-white">
-      <button
-        type="button"
-        onClick={() => {
-          void toggleFullscreen();
-        }}
-        className="pointer-events-none absolute right-6 top-6 z-20 rounded-md border border-white/20 bg-black/55 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/80 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 focus:pointer-events-auto focus:opacity-100"
-      >
-        {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-      </button>
+    <div
+      className={
+        isEmbedded
+          ? "min-h-screen bg-[#05070b] text-white"
+          : "group relative min-h-screen bg-[#05070b] p-3 text-white"
+      }
+    >
+      {!isEmbedded && (
+        <button
+          type="button"
+          onClick={() => {
+            void toggleFullscreen();
+          }}
+          className="pointer-events-none absolute right-6 top-6 z-20 rounded-md border border-white/20 bg-black/55 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/80 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 focus:pointer-events-auto focus:opacity-100"
+        >
+          {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+        </button>
+      )}
       <div
         ref={screenHostRef}
-        className="mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[2200px] items-center justify-center bg-[#05070b]"
+        className={
+          isEmbedded
+            ? "flex min-h-screen w-full items-center justify-center bg-[#05070b]"
+            : "mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[2200px] items-center justify-center bg-[#05070b]"
+        }
       >
         <div
           ref={screenFrameRef}
           onDoubleClick={() => {
             void toggleFullscreen();
           }}
-          className="w-full max-h-full overflow-hidden rounded-2xl border border-white/10 shadow-2xl"
+          className={
+            isEmbedded
+              ? "h-full w-full overflow-hidden"
+              : "w-full max-h-full overflow-hidden border border-white/10 shadow-2xl"
+          }
           style={{ aspectRatio: toCssAspectRatio(aspectRatio) }}
         >
-          <div className="mx-auto flex h-full min-h-0 max-w-[1800px] flex-col px-[clamp(0.75rem,1.6vw,2rem)] py-[clamp(0.75rem,1.6vw,2rem)]">
-        <header className="flex items-center justify-between gap-6 border-b border-white/10 pb-4">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.35em] text-cyan-300/85">
-              Audience Screen
-            </div>
-            <div className="mt-2 text-3xl font-semibold tracking-tight">
-              {active?.name ?? "Live Program"}
-            </div>
-          </div>
-          <div className="text-right">
-            <div className="font-mono text-4xl tabular-nums text-white/90">
-              {formatClock(now)}
-            </div>
-            {active && (
-              <div className="mt-2 text-xs uppercase tracking-[0.26em] text-white/45">
-                Join code {active.joinCode}
-              </div>
-            )}
-          </div>
-        </header>
-
-        <div className="mt-[clamp(0.75rem,1.5vw,2rem)] grid min-h-0 flex-1 gap-[clamp(0.75rem,1.5vw,2rem)] xl:grid-cols-[minmax(0,1fr)_24rem]">
-          <main className="flex min-h-0 flex-col rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(0,177,255,0.12),transparent_45%),rgba(255,255,255,0.03)] p-[clamp(0.85rem,1.7vw,2.5rem)] shadow-2xl">
-            {live ? (
-              <>
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3 text-xs font-semibold uppercase tracking-[0.34em] text-red-400">
-                    <span className="inline-block size-2 animate-pulse rounded-full bg-red-500" />
-                    Live Now
+          <div
+            className={
+              isEmbedded
+                ? "flex h-full min-h-0 w-full flex-col"
+                : "mx-auto flex h-full min-h-0 max-w-[1800px] flex-col px-[clamp(0.75rem,1.6vw,2rem)] py-[clamp(0.75rem,1.6vw,2rem)]"
+            }
+          >
+            <div className="grid min-h-0 flex-1 gap-[clamp(0.75rem,1.5vw,2rem)]">
+              <main
+                className={
+                  isEmbedded
+                    ? "flex min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(0,177,255,0.12),transparent_45%),rgba(255,255,255,0.03)] p-[clamp(0.85rem,1.7vw,2.5rem)]"
+                    : "flex min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(0,177,255,0.12),transparent_45%),rgba(255,255,255,0.03)] p-[clamp(0.85rem,1.7vw,2.5rem)] shadow-2xl"
+                }
+              >
+                {live ? (
+                  <div className="min-h-0 flex flex-1 flex-col overflow-auto">
+                    <LiveBody item={live} embedded={isEmbedded} />
                   </div>
-                  <div className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs uppercase tracking-[0.25em] text-white/55">
-                    {labelFor(live)}
-                  </div>
-                </div>
-
-                <div className="mt-[clamp(0.75rem,1.4vw,2rem)] min-h-0 flex flex-1 flex-col overflow-auto">
-                  <LiveBody item={live} />
-                </div>
-
-                <div className="mt-[clamp(0.75rem,1.4vw,2rem)] flex items-center justify-between gap-6 border-t border-white/10 pt-[clamp(0.65rem,1.3vw,1.5rem)]">
-                  <CountdownTimer item={live} />
-                  {upcoming[0] && (
-                    <div className="max-w-[36rem] text-right">
-                      <div className="text-xs uppercase tracking-[0.28em] text-white/40">
-                        Up next
+                ) : (
+                  <div className="grid flex-1 place-items-center text-center">
+                    <div>
+                      <div className="text-xs uppercase tracking-[0.4em] text-white/40">
+                        Standby
                       </div>
-                      <div className="mt-2 text-2xl font-medium text-white/90">
-                        {upcoming[0].title}
-                      </div>
+                      <h1
+                        className={
+                          isEmbedded
+                            ? "mt-4 text-[clamp(1.35rem,5vw,2.8rem)] font-semibold tracking-tight text-white/70"
+                            : "mt-6 text-5xl font-semibold tracking-tight text-white/70 sm:text-7xl"
+                        }
+                      >
+                        {active ? "Program starting soon" : "No active program"}
+                      </h1>
                     </div>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="grid flex-1 place-items-center text-center">
-                <div>
-                  <div className="text-xs uppercase tracking-[0.4em] text-white/40">
-                    Standby
                   </div>
-                  <h1 className="mt-6 text-5xl font-semibold tracking-tight text-white/70 sm:text-7xl">
-                    {active ? "Program starting soon" : "No active program"}
-                  </h1>
-                </div>
-              </div>
-            )}
-          </main>
-
-          <aside className="flex min-h-0 flex-col gap-[clamp(0.75rem,1.4vw,1.5rem)] overflow-hidden">
-            {mobileUrl && active && (
-              <section className="shrink-0 rounded-[2rem] border border-white/10 bg-white/[0.04] p-[clamp(0.75rem,1.3vw,1.5rem)] shadow-2xl">
-                <div className="text-xs uppercase tracking-[0.3em] text-white/40">
-                  Follow Along
-                </div>
-                <div className="mt-4 grid place-items-center rounded-2xl bg-white p-4">
-                  <QRCodeSVG value={mobileUrl} size={220} level="M" includeMargin />
-                </div>
-                <div className="mt-5 text-center">
-                  <div className="text-sm text-white/65">Open on phone</div>
-                  <div className="mt-2 font-mono text-2xl font-semibold tracking-[0.18em] text-cyan-300">
-                    {active.joinCode}
-                  </div>
-                </div>
-              </section>
-            )}
-
-            {announcements.length > 0 && (
-              <section className="flex min-h-0 flex-1 flex-col rounded-[2rem] border border-white/10 bg-white/[0.04] p-[clamp(0.75rem,1.3vw,1.5rem)] shadow-2xl">
-                <div className="text-xs uppercase tracking-[0.3em] text-white/40">
-                  Announcements
-                </div>
-                <ul className="mt-5 flex-1 space-y-4 overflow-auto pr-1">
-                  {announcements.map((item) => (
-                    <AnnouncementRailCard key={item.id} item={item} now={now} />
-                  ))}
-                </ul>
-              </section>
-            )}
-          </aside>
-        </div>
+                )}
+              </main>
+            </div>
           </div>
         </div>
       </div>
@@ -249,88 +188,53 @@ function toCssAspectRatio(ratio: ScreenAspectRatio): string {
   return `${w} / ${h}`;
 }
 
-function AnnouncementRailCard({
-  item,
-  now,
-}: {
-  item: ProgramItem;
-  now: number;
-}) {
-  const c = (item.content ?? {}) as Partial<AnnouncementContent>;
+function LiveBody({ item, embedded = false }: { item: ProgramItem; embedded?: boolean }) {
+  const badgeClass = embedded
+    ? "w-fit rounded-full bg-white/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-white/55"
+    : "w-fit rounded-full bg-white/[0.04] px-4 py-2 text-xs uppercase tracking-[0.25em] text-white/55";
 
-  return (
-    <li className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 text-left">
-      <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.25em] text-white/45">
-        <div className="flex items-center gap-2">
-          <span>Announcement</span>
-          {item.isPinned && (
-            <span className="rounded-full bg-amber-400/15 px-2 py-1 tracking-[0.18em] text-amber-300">
-              Pinned
-            </span>
-          )}
-        </div>
-        <span>{relativeTime(item.publishedAt ?? item.createdAt, now)}</span>
-      </div>
-      <div className="mt-3 text-2xl font-semibold leading-tight text-white">
-        {item.title}
-      </div>
-      {c.body && (
-        <p className="mt-3 whitespace-pre-line text-base leading-relaxed text-white/72">
-          {c.body}
-        </p>
-      )}
-    </li>
-  );
-}
-
-function CountdownTimer({ item }: { item: ProgramItem }) {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  if (!item.liveStartedAt || item.duration <= 0) {
-    return (
-      <div className="mt-8 text-lg text-white/50 sm:text-xl">
-        {item.duration} minutes
-      </div>
-    );
-  }
-
-  const startedAt = new Date(item.liveStartedAt).getTime();
-  const totalMs = item.duration * 60_000;
-  const remainingMs = Math.max(0, startedAt + totalMs - now);
-  const elapsedMs = now - startedAt;
-  const overrun = startedAt + totalMs < now;
-
-  const display = formatMs(overrun ? elapsedMs - totalMs : remainingMs);
-  const color = overrun ? "text-red-400" : remainingMs < 60_000 ? "text-amber-300" : "text-white/60";
-
-  return (
-    <div className={`font-mono text-4xl tabular-nums sm:text-5xl ${color}`}>
-      {overrun ? "+" : ""}
-      {display}
-    </div>
-  );
-}
-
-function LiveBody({ item }: { item: ProgramItem }) {
   if (item.itemType === "speaker") {
     const content = (item.content ?? {}) as Partial<SpeakerContent>;
     return (
       <div className="flex h-full flex-col">
+        <div className={badgeClass}>{labelFor(item)}</div>
+        <h1
+          className={
+            embedded
+              ? "mt-3 text-[clamp(1.35rem,4vw,2.8rem)] font-semibold leading-[1.02] tracking-tight"
+              : "mt-4 text-5xl font-semibold leading-[1.02] tracking-tight lg:text-7xl"
+          }
+        >
+          {item.title}
+        </h1>
+        <div
+          className={
+            embedded
+              ? "mt-3 text-[clamp(1.1rem,3.4vw,2.2rem)] font-semibold leading-tight text-white/95"
+              : "mt-5 text-4xl font-semibold leading-tight text-white/95 lg:text-6xl"
+          }
+        >
+          {content.speaker || ""}
+        </div>
         {content.topic && (
-          <div className="text-lg font-semibold uppercase tracking-[0.28em] text-cyan-300/82">
+          <div
+            className={
+              embedded
+                ? "mt-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-300/82"
+                : "mt-4 text-lg font-semibold uppercase tracking-[0.28em] text-cyan-300/82"
+            }
+          >
             {content.topic}
           </div>
         )}
-        <h1 className="mt-5 text-6xl font-semibold leading-[1.02] tracking-tight lg:text-8xl">
-          {content.speaker || item.title}
-        </h1>
         {content.bio && (
-          <p className="mt-8 max-w-5xl whitespace-pre-line text-3xl leading-relaxed text-white/74">
+          <p
+            className={
+              embedded
+                ? "mt-4 max-w-5xl whitespace-pre-line text-[clamp(0.9rem,2.1vw,1.35rem)] leading-relaxed text-white/74"
+                : "mt-6 max-w-5xl whitespace-pre-line text-3xl leading-relaxed text-white/74"
+            }
+          >
             {content.bio}
           </p>
         )}
@@ -342,11 +246,30 @@ function LiveBody({ item }: { item: ProgramItem }) {
     const content = (item.content ?? {}) as Partial<SongContent>;
     return (
       <div className="flex h-full flex-col">
-        <h1 className="text-6xl font-semibold leading-[1.02] tracking-tight lg:text-8xl">
+        <div className={badgeClass}>{labelFor(item)}</div>
+        <h1
+          className={
+            embedded
+              ? "mt-3 text-[clamp(1.45rem,4.3vw,2.9rem)] font-semibold leading-[1.02] tracking-tight"
+              : "mt-4 text-6xl font-semibold leading-[1.02] tracking-tight lg:text-8xl"
+          }
+        >
           {item.title}
         </h1>
-        <div className="mt-8 max-h-[46rem] overflow-hidden rounded-[2rem] border border-white/10 bg-black/20 px-8 py-8">
-          <pre className="whitespace-pre-wrap text-center text-3xl leading-relaxed text-white/88">
+        <div
+          className={
+            embedded
+              ? "mt-4 min-h-0 flex-1 overflow-auto bg-black/20 px-4 py-4"
+              : "mt-6 min-h-0 flex-1 overflow-auto rounded-[2rem] bg-black/20 px-8 py-8"
+          }
+        >
+          <pre
+            className={
+              embedded
+                ? "whitespace-pre-wrap text-center text-[clamp(0.85rem,2vw,1.35rem)] leading-relaxed text-white/88"
+                : "whitespace-pre-wrap text-center text-3xl leading-relaxed text-white/88"
+            }
+          >
             {content.lyrics?.trim() || "No lyrics yet."}
           </pre>
         </div>
@@ -357,41 +280,29 @@ function LiveBody({ item }: { item: ProgramItem }) {
   const content = (item.content ?? {}) as Partial<AnnouncementContent>;
   return (
     <div className="flex h-full flex-col">
-      <h1 className="text-6xl font-semibold leading-[1.02] tracking-tight lg:text-8xl">
+      <div className={badgeClass}>{labelFor(item)}</div>
+      <h1
+        className={
+          embedded
+            ? "mt-3 text-[clamp(1.45rem,4.2vw,2.9rem)] font-semibold leading-[1.02] tracking-tight"
+            : "mt-4 text-6xl font-semibold leading-[1.02] tracking-tight lg:text-8xl"
+        }
+      >
         {item.title}
       </h1>
       {content.body && (
-        <p className="mt-8 max-w-5xl whitespace-pre-line text-3xl leading-relaxed text-white/76">
+        <p
+          className={
+            embedded
+              ? "mt-4 max-w-5xl whitespace-pre-line text-[clamp(0.9rem,2.2vw,1.4rem)] leading-relaxed text-white/76"
+              : "mt-6 max-w-5xl whitespace-pre-line text-3xl leading-relaxed text-white/76"
+          }
+        >
           {content.body}
         </p>
       )}
     </div>
   );
-}
-
-function formatMs(ms: number): string {
-  const totalSec = Math.floor(ms / 1000);
-  const m = Math.floor(totalSec / 60);
-  const s = totalSec % 60;
-  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-}
-
-function relativeTime(iso: string, now: number): string {
-  const diff = now - new Date(iso).getTime();
-  const m = Math.floor(diff / 60_000);
-  if (m < 1) return "just now";
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  return `${d}d ago`;
-}
-
-function formatClock(now: number) {
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(now);
 }
 
 function labelFor(item: ProgramItem) {
