@@ -3,8 +3,11 @@ import { useEffect, useMemo, useState } from "react";
 import {
   subscribeItems,
   subscribePrograms,
+  type AnnouncementContent,
   type Program,
   type ProgramItem,
+  visibleAnnouncements,
+  visibleUpcomingItems,
 } from "../lib/programs";
 
 export const Route = createFileRoute("/screen")({
@@ -20,8 +23,13 @@ export const Route = createFileRoute("/screen")({
 function ScreenPage() {
   const [programs, setPrograms] = useState<Program[]>([]);
   const [items, setItems] = useState<ProgramItem[]>([]);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => subscribePrograms(setPrograms), []);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(id);
+  }, []);
 
   const active = useMemo(() => programs.find((p) => p.isActive), [programs]);
 
@@ -35,33 +43,54 @@ function ScreenPage() {
 
   const live = useMemo(() => items.find((i) => i.status === "live"), [items]);
   const upcoming = useMemo(
-    () => items.filter((i) => i.status === "upcoming").slice(0, 2),
-    [items],
+    () => visibleUpcomingItems(items, now).slice(0, 2),
+    [items, now],
+  );
+  const announcements = useMemo(
+    () => visibleAnnouncements(items, now).slice(0, 4),
+    [items, now],
   );
 
   return (
-    <div className="flex min-h-screen flex-col bg-black text-white">
-      <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
-        {live ? (
-          <>
-            <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-[0.4em] text-red-400">
-              <span className="inline-block size-2 animate-pulse rounded-full bg-red-500" />
-              Live Now
+    <div className="min-h-screen bg-black text-white">
+      <div className="flex min-h-screen flex-col xl:flex-row">
+        <div className="flex flex-1 flex-col items-center justify-center px-8 py-12 text-center">
+          {live ? (
+            <>
+              <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-[0.4em] text-red-400">
+                <span className="inline-block size-2 animate-pulse rounded-full bg-red-500" />
+                Live Now
+              </div>
+              <h1 className="mt-8 text-6xl font-semibold leading-[1.05] tracking-tight sm:text-8xl lg:text-[10rem]">
+                {live.title}
+              </h1>
+              <CountdownTimer item={live} />
+            </>
+          ) : (
+            <>
+              <div className="text-xs uppercase tracking-[0.4em] text-white/40">
+                Standby
+              </div>
+              <h1 className="mt-6 text-5xl font-semibold tracking-tight text-white/70 sm:text-7xl">
+                {active ? "Program starting soon" : "No active program"}
+              </h1>
+            </>
+          )}
+        </div>
+
+        {announcements.length > 0 && (
+          <aside className="border-t border-white/10 bg-white/[0.03] xl:w-[28rem] xl:border-l xl:border-t-0">
+            <div className="px-8 py-8">
+              <div className="text-xs uppercase tracking-[0.3em] text-white/40">
+                Announcements
+              </div>
+              <ul className="mt-5 space-y-4">
+                {announcements.map((item) => (
+                  <AnnouncementRailCard key={item.id} item={item} now={now} />
+                ))}
+              </ul>
             </div>
-            <h1 className="mt-8 text-6xl font-semibold leading-[1.05] tracking-tight sm:text-8xl lg:text-[10rem]">
-              {live.title}
-            </h1>
-            <CountdownTimer item={live} />
-          </>
-        ) : (
-          <>
-            <div className="text-xs uppercase tracking-[0.4em] text-white/40">
-              Standby
-            </div>
-            <h1 className="mt-6 text-5xl font-semibold tracking-tight text-white/70 sm:text-7xl">
-              {active ? "Program starting soon" : "No active program"}
-            </h1>
-          </>
+          </aside>
         )}
       </div>
 
@@ -95,6 +124,40 @@ function ScreenPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function AnnouncementRailCard({
+  item,
+  now,
+}: {
+  item: ProgramItem;
+  now: number;
+}) {
+  const c = (item.content ?? {}) as Partial<AnnouncementContent>;
+
+  return (
+    <li className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 text-left">
+      <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.25em] text-white/45">
+        <div className="flex items-center gap-2">
+          <span>Announcement</span>
+          {item.isPinned && (
+            <span className="rounded-full bg-amber-400/15 px-2 py-1 tracking-[0.18em] text-amber-300">
+              Pinned
+            </span>
+          )}
+        </div>
+        <span>{relativeTime(item.publishedAt ?? item.createdAt, now)}</span>
+      </div>
+      <div className="mt-3 text-2xl font-semibold leading-tight text-white">
+        {item.title}
+      </div>
+      {c.body && (
+        <p className="mt-3 whitespace-pre-line text-base leading-relaxed text-white/72">
+          {c.body}
+        </p>
+      )}
+    </li>
   );
 }
 
@@ -136,4 +199,15 @@ function formatMs(ms: number): string {
   const m = Math.floor(totalSec / 60);
   const s = totalSec % 60;
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
+
+function relativeTime(iso: string, now: number): string {
+  const diff = now - new Date(iso).getTime();
+  const m = Math.floor(diff / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
 }

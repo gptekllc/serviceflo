@@ -65,6 +65,32 @@ const TYPE_LABEL: Record<ItemType, string> = {
   song: "Song",
 };
 
+function toDateTimeLocalInput(iso: string | null): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  const offset = date.getTimezoneOffset();
+  const local = new Date(date.getTime() - offset * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function parseDateTimeLocalInput(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("Invalid publish time");
+  }
+  return parsed.toISOString();
+}
+
+function isFutureAnnouncement(item: ProgramItem): boolean {
+  return (
+    item.itemType === "announcement" &&
+    !!item.publishedAt &&
+    new Date(item.publishedAt).getTime() > Date.now()
+  );
+}
+
 function AdminPage() {
   const navigate = useNavigate();
   const fetchMyRole = useServerFn(getMyRole);
@@ -585,6 +611,9 @@ function AddItemForm({
   const [title, setTitle] = useState("");
   const [duration, setDuration] = useState("5");
   const [body, setBody] = useState("");
+  const [publishAt, setPublishAt] = useState("");
+  const [isPinned, setIsPinned] = useState(false);
+  const [priority, setPriority] = useState("0");
   const [speaker, setSpeaker] = useState("");
   const [topic, setTopic] = useState("");
   const [bio, setBio] = useState("");
@@ -595,6 +624,9 @@ function AddItemForm({
     setTitle("");
     setDuration("5");
     setBody("");
+    setPublishAt("");
+    setIsPinned(false);
+    setPriority("0");
     setSpeaker("");
     setTopic("");
     setBio("");
@@ -618,6 +650,10 @@ function AddItemForm({
           duration: Number(duration) || 0,
           itemType,
           content,
+          publishedAt:
+            itemType === "announcement" ? parseDateTimeLocalInput(publishAt) : null,
+          isPinned: itemType === "announcement" ? isPinned : false,
+          priority: itemType === "announcement" ? Number(priority) || 0 : 0,
         },
         programId,
       );
@@ -668,7 +704,37 @@ function AddItemForm({
         </div>
       </div>
       {itemType === "announcement" && (
-        <Textarea label="Body" value={body} onChange={setBody} rows={3} />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+          <div className="sm:col-span-3">
+            <Textarea label="Body" value={body} onChange={setBody} rows={3} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Publish at</label>
+            <input
+              type="datetime-local"
+              value={publishAt}
+              onChange={(e) => setPublishAt(e.target.value)}
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <label className="flex items-end gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm">
+            <input
+              type="checkbox"
+              checked={isPinned}
+              onChange={(e) => setIsPinned(e.target.checked)}
+            />
+            <span>Pin to top</span>
+          </label>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Priority</label>
+            <input
+              type="number"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value)}
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+        </div>
       )}
       {itemType === "speaker" && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -873,6 +939,21 @@ function SortableRow({
             <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-secondary-foreground">
               {TYPE_LABEL[item.itemType]}
             </span>
+            {item.itemType === "announcement" && item.isPinned && (
+              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700">
+                pinned
+              </span>
+            )}
+            {item.itemType === "announcement" && item.priority !== 0 && (
+              <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent-foreground">
+                p{item.priority}
+              </span>
+            )}
+            {isFutureAnnouncement(item) && item.publishedAt && (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                scheduled {toDateTimeLocalInput(item.publishedAt).replace("T", " ")}
+              </span>
+            )}
             <span>{item.duration} min</span>
             <StatusBadge status={item.status} />
           </div>
@@ -939,6 +1020,9 @@ function EditItemPanel({
     AnnouncementContent & SpeakerContent & SongContent
   >;
   const [body, setBody] = useState(c.body ?? "");
+  const [publishAt, setPublishAt] = useState(toDateTimeLocalInput(item.publishedAt));
+  const [isPinned, setIsPinned] = useState(item.isPinned);
+  const [priority, setPriority] = useState(String(item.priority));
   const [speaker, setSpeaker] = useState(c.speaker ?? "");
   const [topic, setTopic] = useState(c.topic ?? "");
   const [bio, setBio] = useState(c.bio ?? "");
@@ -956,6 +1040,10 @@ function EditItemPanel({
         duration: Number(duration) || 0,
         itemType,
         content,
+        publishedAt:
+          itemType === "announcement" ? parseDateTimeLocalInput(publishAt) : null,
+        isPinned: itemType === "announcement" ? isPinned : false,
+        priority: itemType === "announcement" ? Number(priority) || 0 : 0,
       }),
     );
     onSaved();
@@ -989,7 +1077,37 @@ function EditItemPanel({
         </div>
       </div>
       {itemType === "announcement" && (
-        <Textarea label="Body" value={body} onChange={setBody} rows={3} />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+          <div className="sm:col-span-3">
+            <Textarea label="Body" value={body} onChange={setBody} rows={3} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Publish at</label>
+            <input
+              type="datetime-local"
+              value={publishAt}
+              onChange={(e) => setPublishAt(e.target.value)}
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            />
+          </div>
+          <label className="flex items-end gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm">
+            <input
+              type="checkbox"
+              checked={isPinned}
+              onChange={(e) => setIsPinned(e.target.checked)}
+            />
+            <span>Pin to top</span>
+          </label>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Priority</label>
+            <input
+              type="number"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value)}
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            />
+          </div>
+        </div>
       )}
       {itemType === "speaker" && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

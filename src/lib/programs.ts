@@ -31,6 +31,9 @@ export interface ProgramItem {
   itemType: ItemType;
   content: ItemContent;
   liveStartedAt: string | null;
+  publishedAt: string | null;
+  isPinned: boolean;
+  priority: number;
   createdAt: string;
 }
 
@@ -51,6 +54,9 @@ type Row = {
   content: Json | null;
   program_id: string;
   live_started_at: string | null;
+  published_at: string | null;
+  is_pinned: boolean;
+  priority: number;
   created_at: string;
 };
 
@@ -72,6 +78,9 @@ function rowToItem(r: Row): ProgramItem {
     itemType: r.item_type,
     content: (r.content ?? {}) as ItemContent,
     liveStartedAt: r.live_started_at,
+    publishedAt: r.published_at,
+    isPinned: r.is_pinned,
+    priority: r.priority,
     createdAt: r.created_at,
   };
 }
@@ -227,6 +236,9 @@ export async function addItem(
     duration: number;
     itemType: ItemType;
     content: ItemContent;
+    publishedAt?: string | null;
+    isPinned?: boolean;
+    priority?: number;
   },
   programId: string,
 ) {
@@ -241,6 +253,9 @@ export async function addItem(
       content: input.content as unknown as Json,
       order_index: order,
       status: "upcoming",
+      published_at: input.publishedAt ?? null,
+      is_pinned: input.isPinned ?? false,
+      priority: input.priority ?? 0,
     })
     .select("id")
     .single();
@@ -254,6 +269,9 @@ export async function addItemsBulk(
     duration: number;
     itemType: ItemType;
     content: ItemContent;
+    publishedAt?: string | null;
+    isPinned?: boolean;
+    priority?: number;
   }>,
   programId: string,
 ) {
@@ -267,6 +285,9 @@ export async function addItemsBulk(
     content: input.content as unknown as Json,
     order_index: start + i,
     status: "upcoming" as const,
+    published_at: input.publishedAt ?? null,
+    is_pinned: input.isPinned ?? false,
+    priority: input.priority ?? 0,
   }));
   const { error } = await supabase.from("program_items").insert(rows);
   if (error) throw error;
@@ -279,6 +300,9 @@ export async function updateItem(
     duration?: number;
     itemType?: ItemType;
     content?: ItemContent;
+    publishedAt?: string | null;
+    isPinned?: boolean;
+    priority?: number;
   },
 ) {
   const { error } = await supabase
@@ -290,6 +314,11 @@ export async function updateItem(
       ...(patch.content !== undefined
         ? { content: patch.content as unknown as Json }
         : {}),
+      ...(patch.publishedAt !== undefined
+        ? { published_at: patch.publishedAt }
+        : {}),
+      ...(patch.isPinned !== undefined ? { is_pinned: patch.isPinned } : {}),
+      ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
     })
     .eq("id", id);
   if (error) throw error;
@@ -317,8 +346,48 @@ export async function duplicateItem(id: string, programId: string) {
     content: row.content ?? {},
     order_index: order,
     status: "upcoming",
+    published_at: row.published_at,
+    is_pinned: row.is_pinned,
+    priority: row.priority,
   });
   if (e2) throw e2;
+}
+
+export function isAnnouncementPublished(
+  item: ProgramItem,
+  now = Date.now(),
+): boolean {
+  if (item.itemType !== "announcement") return true;
+  if (!item.publishedAt) return true;
+  return new Date(item.publishedAt).getTime() <= now;
+}
+
+export function visibleUpcomingItems(
+  items: ProgramItem[],
+  now = Date.now(),
+): ProgramItem[] {
+  return items.filter(
+    (item) => item.status === "upcoming" && isAnnouncementPublished(item, now),
+  );
+}
+
+export function visibleAnnouncements(
+  items: ProgramItem[],
+  now = Date.now(),
+): ProgramItem[] {
+  return [...items]
+    .filter(
+      (item) =>
+        item.itemType === "announcement" && isAnnouncementPublished(item, now),
+    )
+    .sort((a, b) => {
+      if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+      if (a.priority !== b.priority) return b.priority - a.priority;
+      const aTime = a.publishedAt ?? a.createdAt;
+      const bTime = b.publishedAt ?? b.createdAt;
+      if (aTime !== bTime) return aTime < bTime ? 1 : -1;
+      return a.createdAt < b.createdAt ? 1 : -1;
+    });
 }
 
 export async function reorderItems(orderedIds: string[]) {
