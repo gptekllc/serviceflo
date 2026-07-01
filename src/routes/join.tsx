@@ -3,6 +3,8 @@ import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useState, type FormEvent } from "react";
 import { joinProgramByCode } from "@/lib/programs.functions";
+import { supabase } from "@/integrations/supabase/client";
+
 
 export const Route = createFileRoute("/join")({
   head: () => ({
