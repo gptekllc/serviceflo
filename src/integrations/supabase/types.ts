@@ -19,6 +19,7 @@ export type Database = {
           created_at: string
           item_id: string | null
           program_id: string
+          slide_index: number
           target: string
           updated_at: string
         }
@@ -26,6 +27,7 @@ export type Database = {
           created_at?: string
           item_id?: string | null
           program_id: string
+          slide_index?: number
           target: string
           updated_at?: string
         }
@@ -33,6 +35,7 @@ export type Database = {
           created_at?: string
           item_id?: string | null
           program_id?: string
+          slide_index?: number
           target?: string
           updated_at?: string
         }
@@ -229,6 +232,10 @@ export type Database = {
       set_active_program: { Args: { _id: string }; Returns: undefined }
       set_presentation_item: {
         Args: { _item_id: string; _program_id: string; _target: string }
+        Returns: undefined
+      }
+      set_presentation_slide_index: {
+        Args: { _program_id: string; _slide_index: number; _target: string }
         Returns: undefined
       }
     }
