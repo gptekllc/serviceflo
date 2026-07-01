@@ -138,35 +138,6 @@ export type Database = {
           },
         ]
       }
-      stage_messages: {
-        Row: {
-          created_at: string
-          message: string
-          program_id: string
-          updated_at: string
-        }
-        Insert: {
-          created_at?: string
-          message?: string
-          program_id: string
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
-          message?: string
-          program_id?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "stage_messages_program_id_fkey"
-            columns: ["program_id"]
-            isOneToOne: true
-            referencedRelation: "programs"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       programs: {
         Row: {
           audience_aspect_ratio: string

@@ -336,7 +336,8 @@ function StageMessagePanel({ activeProgram }: { activeProgram: Program | null })
     setError(null);
     setBusy("send");
     try {
-      await sendStageMessage(activeProgram.id, message);
+      const next = await sendStageMessage(activeProgram.id, message);
+      setCurrent(next);
       setMessage("");
     } catch (err) {
       setError((err as Error).message);
@@ -351,6 +352,7 @@ function StageMessagePanel({ activeProgram }: { activeProgram: Program | null })
     setBusy("clear");
     try {
       await clearStageMessage(activeProgram.id);
+      setCurrent(null);
     } catch (err) {
       setError((err as Error).message);
     } finally {

@@ -114,13 +114,6 @@ type PresentationOutputRow = {
   updated_at: string;
 };
 
-type StageMessageRow = {
-  program_id: string;
-  message: string;
-  created_at: string;
-  updated_at: string;
-};
-
 function rowToItem(r: Row): ProgramItem {
   return {
     id: r.id,
@@ -158,15 +151,6 @@ function rowToPresentationOutput(r: PresentationOutputRow): PresentationOutput {
     programId: r.program_id,
     target: r.target,
     itemId: r.item_id,
-    updatedAt: r.updated_at,
-  };
-}
-
-function rowToStageMessage(r: StageMessageRow): StageMessage {
-  return {
-    programId: r.program_id,
-    message: r.message,
-    createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
 }
@@ -431,64 +415,81 @@ export function subscribeStageMessage(
   cb: (message: StageMessage | null) => void,
   programId: string,
 ): () => void {
-  let cancelled = false;
-
-  const refresh = async () => {
-    const { data, error } = await supabase
-      .from("stage_messages")
-      .select("*")
-      .eq("program_id", programId)
-      .maybeSingle();
-    if (cancelled) return;
-    if (error) {
-      console.error("[stage_messages] load failed:", error);
-      cb(null);
-      return;
-    }
-    cb(data ? rowToStageMessage(data as StageMessageRow) : null);
-  };
-
-  void refresh();
-
   const channel = supabase
     .channel(`stage_messages:${programId}`)
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "stage_messages",
-        filter: `program_id=eq.${programId}`,
-      },
-      (payload) => {
-        if (payload.eventType === "DELETE") {
-          cb(null);
-          return;
-        }
-        cb(rowToStageMessage(payload.new as StageMessageRow));
-      },
-    )
+    .on("broadcast", { event: "stage-message" }, (payload) => {
+      const next = payload.payload as { message?: string | null; updatedAt?: string };
+      if (!next.message) {
+        cb(null);
+        return;
+      }
+      const updatedAt = next.updatedAt ?? new Date().toISOString();
+      cb({
+        programId,
+        message: next.message,
+        createdAt: updatedAt,
+        updatedAt,
+      });
+    })
     .subscribe();
 
   return () => {
-    cancelled = true;
     void supabase.removeChannel(channel);
   };
 }
 
-export async function sendStageMessage(programId: string, message: string) {
+async function broadcastStageMessage(
+  programId: string,
+  payload: { message: string | null; updatedAt: string },
+) {
+  const channel = supabase.channel(`stage_messages:${programId}`);
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      void supabase.removeChannel(channel);
+      if (error) reject(error);
+      else resolve();
+    };
+    const timeout = window.setTimeout(() => finish(new Error("Stage message timed out")), 5000);
+
+    channel.subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        void channel
+          .send({
+            type: "broadcast",
+            event: "stage-message",
+            payload,
+          })
+          .then((result) => {
+            if (result === "ok") finish();
+            else finish(new Error("Stage message could not be sent"));
+          });
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        finish(new Error("Stage message channel failed"));
+      }
+    });
+  });
+}
+
+export async function sendStageMessage(programId: string, message: string): Promise<StageMessage> {
   const trimmed = message.trim();
   if (!trimmed) throw new Error("Message is required");
-  const { error } = await supabase.from("stage_messages").upsert({
-    program_id: programId,
+  const updatedAt = new Date().toISOString();
+  await broadcastStageMessage(programId, { message: trimmed, updatedAt });
+  return {
+    programId,
     message: trimmed,
-  });
-  if (error) throw error;
+    createdAt: updatedAt,
+    updatedAt,
+  };
 }
 
 export async function clearStageMessage(programId: string) {
-  const { error } = await supabase.from("stage_messages").delete().eq("program_id", programId);
-  if (error) throw error;
+  await broadcastStageMessage(programId, { message: null, updatedAt: new Date().toISOString() });
 }
 
 async function nextOrderIndex(programId: string): Promise<number> {
