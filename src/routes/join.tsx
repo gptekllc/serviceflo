@@ -30,6 +30,11 @@ function JoinPage() {
     setBusy(true);
     setError(null);
     try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session) {
+        navigate({ to: "/auth", search: { redirect: `/join?code=${normalized}` } });
+        return;
+      }
       await joinByCode({ data: { code: normalized } });
       navigate({ to: "/mobile", search: { code: normalized } });
     } catch (err) {
@@ -39,6 +44,7 @@ function JoinPage() {
       setBusy(false);
     }
   };
+
 
   const needsSignIn =
     error?.toLowerCase().includes("unauthorized") ||
