@@ -19,9 +19,21 @@ export const getMyRole = createServerFn({ method: "GET" })
 export const claimCoordinatorIfFirst = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<{ claimed: boolean }> => {
-    const { data, error } = await context.supabase.rpc(
-      "claim_coordinator_if_first",
-    );
+    const { data, error } = await context.supabase.rpc("claim_coordinator_if_first");
     if (error) throw new Error(error.message);
     return { claimed: Boolean(data) };
+  });
+
+export const ensureMyCoordinatorRole = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<{ role: AppRole }> => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin
+      .from("user_roles")
+      .insert({ user_id: context.userId, role: "coordinator" })
+      .select("role")
+      .single();
+
+    if (error && error.code !== "23505") throw new Error(error.message);
+    return { role: "coordinator" };
   });

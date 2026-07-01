@@ -9,11 +9,7 @@ import {
   updateUserRoleByAdmin,
   type AdminManagedUser,
 } from "@/lib/admin.functions";
-import {
-  claimCoordinatorIfFirst,
-  getMyRole,
-  type AppRole,
-} from "@/lib/auth.functions";
+import { ensureMyCoordinatorRole, getMyRole, type AppRole } from "@/lib/auth.functions";
 import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/_authenticated/users")({
@@ -29,11 +25,9 @@ export const Route = createFileRoute("/_authenticated/users")({
 function UsersPage() {
   const navigate = useNavigate();
   const fetchMyRole = useServerFn(getMyRole);
-  const claimCoordinator = useServerFn(claimCoordinatorIfFirst);
+  const ensureCoordinatorRole = useServerFn(ensureMyCoordinatorRole);
 
   const [role, setRole] = useState<AppRole | null | "loading">("loading");
-  const [claimError, setClaimError] = useState<string | null>(null);
-  const [claiming, setClaiming] = useState(false);
 
   const loadRole = async () => {
     try {
@@ -48,16 +42,7 @@ function UsersPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const { role } = await fetchMyRole();
-        if (role) {
-          setRole(role);
-          return;
-        }
-        try {
-          await claimCoordinator();
-        } catch {
-          // ignore concurrent claims
-        }
+        await ensureCoordinatorRole();
         await loadRole();
       } catch (e) {
         console.error(e);
@@ -72,21 +57,9 @@ function UsersPage() {
     navigate({ to: "/auth", replace: true });
   };
 
-  const handleClaim = async () => {
-    setClaiming(true);
-    setClaimError(null);
-    try {
-      const { claimed } = await claimCoordinator();
-      if (claimed) {
-        await loadRole();
-      } else {
-        setClaimError("A coordinator already exists. Ask them to grant you access.");
-      }
-    } catch (e) {
-      setClaimError((e as Error).message);
-    } finally {
-      setClaiming(false);
-    }
+  const handleAdminSignIn = async () => {
+    await supabase.auth.signOut();
+    navigate({ to: "/auth", search: { redirect: "/users" }, replace: true });
   };
 
   if (role === "loading") {
@@ -101,17 +74,16 @@ function UsersPage() {
     return (
       <div className="min-h-screen bg-background text-foreground">
         <div className="mx-auto max-w-md px-6 py-16 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">Coordinator access required</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Admin sign-in required</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Only coordinators can manage users.
+            Sign in with an admin account to manage users.
           </p>
           <div className="mt-6 space-y-3">
             <button
-              onClick={handleClaim}
-              disabled={claiming}
+              onClick={handleAdminSignIn}
               className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {claiming ? "…" : "Become the first coordinator"}
+              Sign in as admin
             </button>
             <button
               onClick={handleSignOut}
@@ -120,11 +92,6 @@ function UsersPage() {
               Sign out
             </button>
           </div>
-          {claimError && (
-            <div className="mt-4 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {claimError}
-            </div>
-          )}
         </div>
       </div>
     );
@@ -394,10 +361,16 @@ function AdminSettings() {
                     <tr key={user.id} className="border-b border-border/70 align-top">
                       <td className="px-2 py-3">
                         <div className="font-medium">{user.email}</div>
-                        <div className="mt-1 font-mono text-xs text-muted-foreground">{user.id}</div>
+                        <div className="mt-1 font-mono text-xs text-muted-foreground">
+                          {user.id}
+                        </div>
                       </td>
-                      <td className="px-2 py-3 text-muted-foreground">{formatDateTime(user.createdAt)}</td>
-                      <td className="px-2 py-3 text-muted-foreground">{formatDateTime(user.lastSignInAt)}</td>
+                      <td className="px-2 py-3 text-muted-foreground">
+                        {formatDateTime(user.createdAt)}
+                      </td>
+                      <td className="px-2 py-3 text-muted-foreground">
+                        {formatDateTime(user.lastSignInAt)}
+                      </td>
                       <td className="px-2 py-3">
                         <div className="flex items-center gap-2">
                           <select
