@@ -104,7 +104,7 @@ function isFutureAnnouncement(item: ProgramItem): boolean {
 function AdminPage() {
   const navigate = useNavigate();
   const fetchMyRole = useServerFn(getMyRole);
-  const ensureCoordinatorRole = useServerFn(ensureMyCoordinatorRole);
+  const ensureCoordinatorRole = useServerFn(claimCoordinatorIfFirst);
 
   const [role, setRole] = useState<AppRole | null | "loading">("loading");
 
