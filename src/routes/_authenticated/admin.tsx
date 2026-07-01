@@ -49,7 +49,7 @@ import {
   type SpeakerContent,
 } from "@/lib/programs";
 import { parseBulletin, type ParsedItem } from "@/lib/ai-import.functions";
-import { ensureMyCoordinatorRole, getMyRole, type AppRole } from "@/lib/auth.functions";
+import { claimCoordinatorIfFirst, getMyRole, type AppRole } from "@/lib/auth.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { AnnouncementsComposer } from "@/components/admin/AnnouncementsComposer";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
