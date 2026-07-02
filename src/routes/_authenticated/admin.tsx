@@ -17,9 +17,20 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  EllipsisVertical,
+  FileImage,
+  Grid2X2,
+  List,
+  Plus,
+  Presentation,
+  Table2,
+  Upload,
+} from "lucide-react";
+import {
   addItem,
   addItemsBulk,
   advancePresentation,
+  assetToImageContent,
   countPowerPointSlides,
   clearStageMessage,
   clearPresentationTarget,
@@ -34,6 +45,7 @@ import {
   setPresentationSlideIndex,
   setActiveProgram,
   subscribeItems,
+  subscribeProgramAssets,
   subscribePresentationOutputs,
   subscribePrograms,
   subscribeStageMessage,
@@ -48,6 +60,8 @@ import {
   type PresentationOutput,
   type PresentationTarget,
   type Program,
+  type ProgramAsset,
+  type ProgramAssetType,
   type ProgramItem,
   type ScreenAspectRatio,
   type SongContent,
@@ -59,6 +73,13 @@ import { parseBulletin, type ParsedItem } from "@/lib/ai-import.functions";
 import { ensureMyCoordinatorRole } from "@/lib/auth.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
@@ -88,8 +109,17 @@ function itemTypeLabel(item: Pick<ProgramItem, "itemType" | "content">): string 
 
 type PushMode = "separate" | "together";
 type AddItemKind = ItemType | "pptx";
+type AssetSource = "upload" | "library";
+type AssetLibraryTab = "all" | ProgramAssetType;
+type AssetLibraryView = "list" | "card" | "table";
 type CoordinatorSectionKey =
-  "stageMessage" | "programSwitcher" | "playback" | "smartImport" | "addItem" | "programItems";
+  | "stageMessage"
+  | "programSwitcher"
+  | "playback"
+  | "smartImport"
+  | "library"
+  | "addItem"
+  | "programItems";
 
 function toDateTimeLocalInput(iso: string | null): string {
   if (!iso) return "";
@@ -156,6 +186,7 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
   const [programs, setPrograms] = useState<Program[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [items, setItems] = useState<ProgramItem[]>([]);
+  const [assets, setAssets] = useState<ProgramAsset[]>([]);
   const [outputs, setOutputs] = useState<PresentationOutput[]>([]);
   const [pushMode, setPushMode] = useState<PushMode>("separate");
   const [openSections, setOpenSections] = useState<Record<CoordinatorSectionKey, boolean>>({
@@ -163,12 +194,14 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
     programSwitcher: true,
     playback: true,
     smartImport: true,
+    library: true,
     addItem: true,
     programItems: true,
   });
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => subscribePrograms(setPrograms), []);
+  useEffect(() => subscribeProgramAssets(setAssets), []);
 
   // Default selection: active program, else first
   useEffect(() => {
@@ -272,6 +305,14 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
                 )}
 
                 <CollapsibleSection
+                  title="Library"
+                  open={openSections.library}
+                  onToggle={() => toggleSection("library")}
+                >
+                  <AssetLibrary programId={selected.id} assets={assets} onError={setErr} />
+                </CollapsibleSection>
+
+                <CollapsibleSection
                   title="Program items"
                   open={openSections.programItems}
                   onToggle={() => toggleSection("programItems")}
@@ -291,7 +332,7 @@ function CoordinatorView({ onSignOut }: { onSignOut: () => void }) {
                   open={openSections.addItem}
                   onToggle={() => toggleSection("addItem")}
                 >
-                  <AddItemForm programId={selected.id} onError={setErr} />
+                  <AddItemForm programId={selected.id} assets={assets} onError={setErr} />
                 </CollapsibleSection>
 
                 <CollapsibleSection
@@ -1462,13 +1503,337 @@ function LiveCountdown({ item }: { item: ProgramItem }) {
   );
 }
 
+// ---------- Asset library ----------
+
+function AssetLibrary({
+  programId,
+  assets,
+  onError,
+}: {
+  programId: string;
+  assets: ProgramAsset[];
+  onError: (msg: string | null) => void;
+}) {
+  const [tab, setTab] = useState<AssetLibraryTab>("all");
+  const [view, setView] = useState<AssetLibraryView>("card");
+  const [busy, setBusy] = useState<ProgramAssetType | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const pptxInputRef = useRef<HTMLInputElement | null>(null);
+
+  const visibleAssets = useMemo(
+    () => assets.filter((asset) => tab === "all" || asset.assetType === tab),
+    [assets, tab],
+  );
+  const imageCount = assets.filter((asset) => asset.assetType === "image").length;
+  const pptxCount = assets.filter((asset) => asset.assetType === "pptx").length;
+
+  const upload = async (type: ProgramAssetType, file: File | null) => {
+    if (!file) return;
+    setBusy(type);
+    onError(null);
+    try {
+      if (type === "image") {
+        await uploadProgramImage(programId, file);
+      } else {
+        await uploadProgramPowerPoint(programId, file);
+      }
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="mt-6 space-y-4 rounded-lg border border-border p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            File library
+          </div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            Upload images and PowerPoint decks once, then reuse them from Add item.
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            className="hidden"
+            onChange={(event) => {
+              void upload("image", event.target.files?.[0] ?? null);
+              event.currentTarget.value = "";
+            }}
+          />
+          <input
+            ref={pptxInputRef}
+            type="file"
+            accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            className="hidden"
+            onChange={(event) => {
+              void upload("pptx", event.target.files?.[0] ?? null);
+              event.currentTarget.value = "";
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => imageInputRef.current?.click()}
+            disabled={busy !== null}
+            className="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent disabled:opacity-50"
+          >
+            {busy === "image" ? (
+              <Spinner className="h-3.5 w-3.5" />
+            ) : (
+              <Upload className="h-3.5 w-3.5" />
+            )}
+            Image
+          </button>
+          <button
+            type="button"
+            onClick={() => pptxInputRef.current?.click()}
+            disabled={busy !== null}
+            className="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent disabled:opacity-50"
+          >
+            {busy === "pptx" ? (
+              <Spinner className="h-3.5 w-3.5" />
+            ) : (
+              <Upload className="h-3.5 w-3.5" />
+            )}
+            PowerPoint
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap gap-1 rounded-md bg-muted p-1">
+          <AssetTabButton active={tab === "all"} onClick={() => setTab("all")}>
+            All {assets.length}
+          </AssetTabButton>
+          <AssetTabButton active={tab === "image"} onClick={() => setTab("image")}>
+            Images {imageCount}
+          </AssetTabButton>
+          <AssetTabButton active={tab === "pptx"} onClick={() => setTab("pptx")}>
+            PowerPoint {pptxCount}
+          </AssetTabButton>
+        </div>
+        <div className="flex w-fit gap-1 rounded-md bg-muted p-1">
+          <AssetViewButton active={view === "list"} label="List" onClick={() => setView("list")}>
+            <List className="h-4 w-4" />
+          </AssetViewButton>
+          <AssetViewButton active={view === "card"} label="Cards" onClick={() => setView("card")}>
+            <Grid2X2 className="h-4 w-4" />
+          </AssetViewButton>
+          <AssetViewButton active={view === "table"} label="Table" onClick={() => setView("table")}>
+            <Table2 className="h-4 w-4" />
+          </AssetViewButton>
+        </div>
+      </div>
+
+      {visibleAssets.length === 0 ? (
+        <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+          No files in this tab yet.
+        </div>
+      ) : view === "table" ? (
+        <AssetTable assets={visibleAssets} />
+      ) : view === "list" ? (
+        <div className="space-y-2">
+          {visibleAssets.map((asset) => (
+            <AssetListRow key={asset.id} asset={asset} />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {visibleAssets.map((asset) => (
+            <AssetCard key={asset.id} asset={asset} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AssetTabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded px-3 py-1.5 text-xs font-medium ${
+        active
+          ? "bg-background text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function AssetViewButton({
+  active,
+  label,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className={`grid h-8 w-8 place-items-center rounded ${
+        active
+          ? "bg-background text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function AssetIcon({ asset }: { asset: ProgramAsset }) {
+  return asset.assetType === "pptx" ? (
+    <Presentation className="h-4 w-4 text-orange-600" />
+  ) : (
+    <FileImage className="h-4 w-4 text-sky-600" />
+  );
+}
+
+function AssetPreview({ asset }: { asset: ProgramAsset }) {
+  if (asset.assetType === "image") {
+    return (
+      <div className="grid aspect-video place-items-center overflow-hidden rounded-md bg-black">
+        <img
+          src={asset.publicUrl}
+          alt={asset.alt || asset.title}
+          className="h-full w-full object-contain"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid aspect-video place-items-center rounded-md border border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-950 dark:bg-orange-950/30 dark:text-orange-300">
+      <Presentation className="h-8 w-8" />
+    </div>
+  );
+}
+
+function AssetCard({ asset }: { asset: ProgramAsset }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-3">
+      <AssetPreview asset={asset} />
+      <div className="mt-3 flex min-w-0 items-start gap-2">
+        <AssetIcon asset={asset} />
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium">{asset.title}</div>
+          <div className="mt-1 truncate text-xs text-muted-foreground">{asset.fileName}</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {assetTypeLabel(asset)} · {formatFileSize(asset.fileSize)} ·{" "}
+            {formatAssetDate(asset.createdAt)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AssetListRow({ asset }: { asset: ProgramAsset }) {
+  return (
+    <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-border bg-card px-3 py-2">
+      <AssetIcon asset={asset} />
+      <div className="min-w-0">
+        <div className="truncate text-sm font-medium">{asset.title}</div>
+        <div className="truncate text-xs text-muted-foreground">{asset.fileName}</div>
+      </div>
+      <div className="text-right text-xs text-muted-foreground">
+        <div>{assetTypeLabel(asset)}</div>
+        <div>{formatFileSize(asset.fileSize)}</div>
+      </div>
+    </div>
+  );
+}
+
+function AssetTable({ assets }: { assets: ProgramAsset[] }) {
+  return (
+    <div className="overflow-x-auto rounded-md border border-border">
+      <table className="w-full min-w-[640px] text-sm">
+        <thead className="bg-muted text-xs uppercase tracking-wide text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2 text-left font-medium">Name</th>
+            <th className="px-3 py-2 text-left font-medium">Type</th>
+            <th className="px-3 py-2 text-left font-medium">File</th>
+            <th className="px-3 py-2 text-right font-medium">Size</th>
+            <th className="px-3 py-2 text-right font-medium">Uploaded</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {assets.map((asset) => (
+            <tr key={asset.id} className="bg-card">
+              <td className="px-3 py-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <AssetIcon asset={asset} />
+                  <span className="truncate font-medium">{asset.title}</span>
+                </div>
+              </td>
+              <td className="px-3 py-2 text-muted-foreground">{assetTypeLabel(asset)}</td>
+              <td className="max-w-[260px] truncate px-3 py-2 text-muted-foreground">
+                {asset.fileName}
+              </td>
+              <td className="px-3 py-2 text-right text-muted-foreground">
+                {formatFileSize(asset.fileSize)}
+              </td>
+              <td className="px-3 py-2 text-right text-muted-foreground">
+                {formatAssetDate(asset.createdAt)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function assetTypeLabel(asset: Pick<ProgramAsset, "assetType">): string {
+  return asset.assetType === "pptx" ? "PowerPoint" : "Image";
+}
+
+function formatFileSize(size: number | null): string {
+  if (!size || size <= 0) return "Unknown";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 102.4) / 10} KB`;
+  return `${Math.round(size / 1024 / 102.4) / 10} MB`;
+}
+
+function formatAssetDate(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(
+    new Date(value),
+  );
+}
+
 // ---------- Add item ----------
 
 function AddItemForm({
   programId,
+  assets,
   onError,
 }: {
   programId: string;
+  assets: ProgramAsset[];
   onError: (msg: string | null) => void;
 }) {
   const [itemKind, setItemKind] = useState<AddItemKind>("announcement");
@@ -1484,9 +1849,18 @@ function AddItemForm({
   const [lyrics, setLyrics] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [pptxFile, setPptxFile] = useState<File | null>(null);
+  const [assetSource, setAssetSource] = useState<AssetSource>("upload");
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [imageFit, setImageFit] = useState<ImageContent["fit"]>("contain");
   const [imageAlt, setImageAlt] = useState("");
   const [busy, setBusy] = useState(false);
+  const mediaAssetType: ProgramAssetType | null =
+    itemKind === "image" ? "image" : itemKind === "pptx" ? "pptx" : null;
+  const mediaAssets = useMemo(
+    () => assets.filter((asset) => asset.assetType === mediaAssetType),
+    [assets, mediaAssetType],
+  );
+  const selectedAsset = mediaAssets.find((asset) => asset.id === selectedAssetId) ?? null;
 
   const reset = () => {
     setTitle("");
@@ -1501,19 +1875,36 @@ function AddItemForm({
     setLyrics("");
     setImageFile(null);
     setPptxFile(null);
+    setAssetSource("upload");
+    setSelectedAssetId(null);
     setImageFit("contain");
     setImageAlt("");
+  };
+
+  const selectAsset = (asset: ProgramAsset) => {
+    setSelectedAssetId(asset.id);
+    if (!title.trim()) setTitle(asset.title);
+    if (asset.assetType === "image") setImageFit(asset.fit);
+    if (!imageAlt.trim()) setImageAlt(asset.alt);
   };
 
   const handle = async (e: FormEvent) => {
     e.preventDefault();
     if (!title.trim() && itemKind !== "image" && itemKind !== "pptx") return;
-    if (itemKind === "image" && !imageFile) {
+    if (itemKind === "image" && assetSource === "upload" && !imageFile) {
       onError("Choose an image file to upload.");
       return;
     }
-    if (itemKind === "pptx" && !pptxFile) {
+    if (itemKind === "image" && assetSource === "library" && !selectedAsset) {
+      onError("Choose an image from the library.");
+      return;
+    }
+    if (itemKind === "pptx" && assetSource === "upload" && !pptxFile) {
       onError("Choose a PowerPoint file to upload.");
+      return;
+    }
+    if (itemKind === "pptx" && assetSource === "library" && !selectedAsset) {
+      onError("Choose a PowerPoint file from the library.");
       return;
     }
     setBusy(true);
@@ -1525,8 +1916,13 @@ function AddItemForm({
         content = { speaker: speaker.trim(), topic: topic.trim(), bio: bio.trim() };
       else if (itemKind === "song") content = { lyrics: lyrics.trim() };
       else if (itemKind === "image") {
-        if (!imageFile) throw new Error("Choose an image file to upload.");
-        const uploaded = await uploadProgramImage(programId, imageFile);
+        const uploaded =
+          assetSource === "library" && selectedAsset
+            ? assetToImageContent(selectedAsset)
+            : imageFile
+              ? await uploadProgramImage(programId, imageFile)
+              : null;
+        if (!uploaded || uploaded.kind === "pptx") throw new Error("Choose an image file.");
         content = {
           ...uploaded,
           kind: "image",
@@ -1534,13 +1930,20 @@ function AddItemForm({
           alt: imageAlt.trim() || title.trim() || uploaded.alt,
         };
       } else {
-        if (!pptxFile) throw new Error("Choose a PowerPoint file to upload.");
-        content = await uploadProgramPowerPoint(programId, pptxFile);
+        const uploaded =
+          assetSource === "library" && selectedAsset
+            ? assetToImageContent(selectedAsset)
+            : pptxFile
+              ? await uploadProgramPowerPoint(programId, pptxFile)
+              : null;
+        if (!uploaded || uploaded.kind !== "pptx") throw new Error("Choose a PowerPoint file.");
+        content = uploaded;
       }
       await addItem(
         {
           title:
             title.trim() ||
+            selectedAsset?.title ||
             imageFile?.name.replace(/\.[^.]+$/, "") ||
             pptxFile?.name.replace(/\.[^.]+$/, "") ||
             "Presentation",
@@ -1580,7 +1983,13 @@ function AddItemForm({
           <label className="text-xs font-medium text-muted-foreground">Type</label>
           <select
             value={itemKind}
-            onChange={(e) => setItemKind(e.target.value as AddItemKind)}
+            onChange={(e) => {
+              setItemKind(e.target.value as AddItemKind);
+              setAssetSource("upload");
+              setSelectedAssetId(null);
+              setImageFile(null);
+              setPptxFile(null);
+            }}
             className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
           >
             <option value="announcement">Announcement</option>
@@ -1647,59 +2056,79 @@ function AddItemForm({
         <Textarea label="Lyrics" value={lyrics} onChange={setLyrics} rows={6} mono />
       )}
       {itemKind === "image" && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_160px]">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Image file</label>
-            <input
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              onChange={(e) => {
-                const file = e.target.files?.[0] ?? null;
-                setImageFile(file);
-                if (file && !title.trim()) {
-                  setTitle(file.name.replace(/\.[^.]+$/, ""));
-                }
-                if (file && !imageAlt.trim()) {
-                  setImageAlt(file.name.replace(/\.[^.]+$/, ""));
-                }
-              }}
-              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-          <label className="text-xs font-medium text-muted-foreground">
-            Fit
-            <select
-              value={imageFit}
-              onChange={(e) => setImageFit(e.target.value as ImageContent["fit"])}
-              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option value="contain">Contain</option>
-              <option value="cover">Cover</option>
-            </select>
-          </label>
-          <div className="sm:col-span-2">
-            <TextInput label="Alt text" value={imageAlt} onChange={setImageAlt} />
-          </div>
+        <div className="space-y-3">
+          <AssetSourceToggle value={assetSource} onChange={setAssetSource} />
+          {assetSource === "upload" ? (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_160px]">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Image file</label>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] ?? null;
+                    setImageFile(file);
+                    if (file && !title.trim()) {
+                      setTitle(file.name.replace(/\.[^.]+$/, ""));
+                    }
+                    if (file && !imageAlt.trim()) {
+                      setImageAlt(file.name.replace(/\.[^.]+$/, ""));
+                    }
+                  }}
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <ImageFitSelect value={imageFit} onChange={setImageFit} />
+              <div className="sm:col-span-2">
+                <TextInput label="Alt text" value={imageAlt} onChange={setImageAlt} />
+              </div>
+            </div>
+          ) : (
+            <>
+              <LibraryAssetPicker
+                assets={mediaAssets}
+                selectedId={selectedAssetId}
+                emptyText="No images in the library yet."
+                onSelect={selectAsset}
+              />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-[160px_minmax(0,1fr)]">
+                <ImageFitSelect value={imageFit} onChange={setImageFit} />
+                <TextInput label="Alt text" value={imageAlt} onChange={setImageAlt} />
+              </div>
+            </>
+          )}
         </div>
       )}
       {itemKind === "pptx" && (
-        <div>
-          <label className="text-xs font-medium text-muted-foreground">PowerPoint file</label>
-          <input
-            type="file"
-            accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            onChange={(e) => {
-              const file = e.target.files?.[0] ?? null;
-              setPptxFile(file);
-              if (file && !title.trim()) {
-                setTitle(file.name.replace(/\.[^.]+$/, ""));
-              }
-            }}
-            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-          />
-          <div className="mt-1 text-xs text-muted-foreground">
-            PPTX files are rendered directly in the browser on /screen and /stage.
-          </div>
+        <div className="space-y-3">
+          <AssetSourceToggle value={assetSource} onChange={setAssetSource} />
+          {assetSource === "upload" ? (
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">PowerPoint file</label>
+              <input
+                type="file"
+                accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                onChange={(e) => {
+                  const file = e.target.files?.[0] ?? null;
+                  setPptxFile(file);
+                  if (file && !title.trim()) {
+                    setTitle(file.name.replace(/\.[^.]+$/, ""));
+                  }
+                }}
+                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              />
+              <div className="mt-1 text-xs text-muted-foreground">
+                PPTX files are rendered directly in the browser on /screen and /stage.
+              </div>
+            </div>
+          ) : (
+            <LibraryAssetPicker
+              assets={mediaAssets}
+              selectedId={selectedAssetId}
+              emptyText="No PowerPoint files in the library yet."
+              onSelect={selectAsset}
+            />
+          )}
         </div>
       )}
       <div className="flex justify-end">
@@ -1708,21 +2137,143 @@ function AddItemForm({
           disabled={
             busy ||
             (!title.trim() && itemKind !== "image" && itemKind !== "pptx") ||
-            (itemKind === "image" && !imageFile) ||
-            (itemKind === "pptx" && !pptxFile)
+            (itemKind === "image" && assetSource === "upload" && !imageFile) ||
+            (itemKind === "image" && assetSource === "library" && !selectedAsset) ||
+            (itemKind === "pptx" && assetSource === "upload" && !pptxFile) ||
+            (itemKind === "pptx" && assetSource === "library" && !selectedAsset)
           }
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
+          <Plus className="h-4 w-4" />
           {busy
             ? "Adding…"
-            : itemKind === "image"
-              ? "Upload image slide"
-              : itemKind === "pptx"
-                ? "Upload PowerPoint"
-                : "Add item"}
+            : itemKind === "image" || itemKind === "pptx"
+              ? assetSource === "library"
+                ? "Add from library"
+                : itemKind === "image"
+                  ? "Upload image slide"
+                  : "Upload PowerPoint"
+              : "Add item"}
         </button>
       </div>
     </form>
+  );
+}
+
+function AssetSourceToggle({
+  value,
+  onChange,
+}: {
+  value: AssetSource;
+  onChange: (value: AssetSource) => void;
+}) {
+  return (
+    <div className="flex w-fit gap-1 rounded-md bg-muted p-1">
+      <button
+        type="button"
+        onClick={() => onChange("upload")}
+        className={`inline-flex items-center gap-2 rounded px-3 py-1.5 text-xs font-medium ${
+          value === "upload"
+            ? "bg-background text-foreground shadow-sm"
+            : "text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        <Upload className="h-3.5 w-3.5" />
+        Upload new
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("library")}
+        className={`inline-flex items-center gap-2 rounded px-3 py-1.5 text-xs font-medium ${
+          value === "library"
+            ? "bg-background text-foreground shadow-sm"
+            : "text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        <Grid2X2 className="h-3.5 w-3.5" />
+        Library
+      </button>
+    </div>
+  );
+}
+
+function ImageFitSelect({
+  value,
+  onChange,
+}: {
+  value: ImageContent["fit"];
+  onChange: (value: ImageContent["fit"]) => void;
+}) {
+  return (
+    <label className="text-xs font-medium text-muted-foreground">
+      Fit
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as ImageContent["fit"])}
+        className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+      >
+        <option value="contain">Contain</option>
+        <option value="cover">Cover</option>
+      </select>
+    </label>
+  );
+}
+
+function LibraryAssetPicker({
+  assets,
+  selectedId,
+  emptyText,
+  onSelect,
+}: {
+  assets: ProgramAsset[];
+  selectedId: string | null;
+  emptyText: string;
+  onSelect: (asset: ProgramAsset) => void;
+}) {
+  if (assets.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
+        {emptyText}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid max-h-72 grid-cols-1 gap-2 overflow-y-auto rounded-md border border-border bg-background p-2 sm:grid-cols-2">
+      {assets.map((asset) => {
+        const selected = asset.id === selectedId;
+        return (
+          <button
+            key={asset.id}
+            type="button"
+            onClick={() => onSelect(asset)}
+            className={`grid grid-cols-[56px_minmax(0,1fr)] items-center gap-3 rounded-md border p-2 text-left ${
+              selected ? "border-primary bg-primary/5" : "border-border hover:bg-accent"
+            }`}
+          >
+            {asset.assetType === "image" ? (
+              <div className="h-12 w-14 overflow-hidden rounded bg-black">
+                <img
+                  src={asset.publicUrl}
+                  alt={asset.alt || asset.title}
+                  className="h-full w-full object-contain"
+                />
+              </div>
+            ) : (
+              <div className="grid h-12 w-14 place-items-center rounded bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-300">
+                <Presentation className="h-5 w-5" />
+              </div>
+            )}
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium">{asset.title}</span>
+              <span className="mt-1 block truncate text-xs text-muted-foreground">
+                {asset.fileName}
+              </span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1946,25 +2497,11 @@ function SortableRow({
         </div>
         <div className="flex flex-wrap items-center justify-end gap-1">
           <button
-            onClick={() => setEditing((v) => !v)}
-            className="rounded-md border border-input bg-background px-2 py-1 text-xs hover:bg-accent"
-          >
-            {editing ? "Close" : "Edit"}
-          </button>
-          <button
             onClick={() => void runSafe(() => duplicateItem(item.id, programId))}
             className="rounded-md border border-input bg-background px-2 py-1 text-xs hover:bg-accent"
             aria-label="Duplicate"
           >
             Copy
-          </button>
-          <button
-            onClick={() => {
-              if (confirm(`Delete "${item.title}"?`)) void runSafe(() => deleteItem(item.id));
-            }}
-            className="rounded-md border border-destructive/40 bg-background px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
-          >
-            Delete
           </button>
           {pushMode === "separate" ? (
             <>
@@ -1997,6 +2534,33 @@ function SortableRow({
               Push both
             </button>
           )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Item actions"
+                className="rounded-md border border-input bg-background px-2 py-1 text-xs hover:bg-accent"
+              >
+                <EllipsisVertical className="size-4" aria-hidden />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuItem onSelect={() => setEditing((v) => !v)} className="cursor-pointer">
+                {editing ? "Close editor" : "Edit"}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onSelect={() => {
+                  if (confirm(`Delete "${item.title}"?`)) {
+                    void runSafe(() => deleteItem(item.id));
+                  }
+                }}
+                className="cursor-pointer text-destructive focus:text-destructive"
+              >
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
       {editing && (

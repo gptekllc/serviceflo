@@ -224,17 +224,31 @@ function StagePage() {
       </button>
       <div
         ref={stageHostRef}
-        className="mx-auto flex min-h-[calc(100vh-0.5rem)] max-w-[2200px] items-center justify-center bg-zinc-950"
+        className={
+          isFullscreen
+            ? "flex h-screen w-screen items-center justify-center overflow-hidden bg-zinc-950"
+            : "mx-auto flex min-h-[calc(100vh-0.5rem)] max-w-[2200px] items-center justify-center bg-zinc-950"
+        }
         style={{ backgroundColor }}
       >
         <div
           onDoubleClick={() => {
             void toggleFullscreen();
           }}
-          className="w-full max-h-full overflow-hidden rounded-2xl border border-white/10 shadow-2xl"
-          style={{ aspectRatio: toCssAspectRatio(aspectRatio) }}
+          className={
+            isFullscreen
+              ? "overflow-hidden border border-white/10 shadow-2xl"
+              : "w-full max-h-full overflow-hidden rounded-2xl border border-white/10 shadow-2xl"
+          }
+          style={displayFrameStyle(aspectRatio, isFullscreen ? "0px" : "0.5rem")}
         >
-          <div className="mx-auto h-full max-w-[1800px] p-[clamp(0.06rem,0.25vw,0.2rem)]">
+          <div
+            className={
+              isFullscreen
+                ? "h-full w-full p-[clamp(0.06rem,0.25vw,0.2rem)]"
+                : "mx-auto h-full max-w-[1800px] p-[clamp(0.06rem,0.25vw,0.2rem)]"
+            }
+          >
             <main
               className="flex h-full min-h-0 flex-col rounded-[2rem] bg-[radial-gradient(circle_at_top,rgba(0,255,196,0.12),transparent_40%),rgba(255,255,255,0.03)] p-[clamp(0.12rem,0.45vw,0.3rem)] shadow-2xl"
               style={{ backgroundColor }}
@@ -310,6 +324,15 @@ function StagePage() {
 function toCssAspectRatio(ratio: ScreenAspectRatio): string {
   const [w, h] = ratio.split(":");
   return `${w} / ${h}`;
+}
+
+function displayFrameStyle(ratio: ScreenAspectRatio, viewportInset: string) {
+  const [w, h] = ratio.split(":").map(Number);
+  return {
+    aspectRatio: `${w} / ${h}`,
+    maxHeight: `calc(100dvh - ${viewportInset})`,
+    width: `min(100%, calc((100dvh - ${viewportInset}) * ${w / h}))`,
+  };
 }
 
 function labelFor(item: ProgramItem) {

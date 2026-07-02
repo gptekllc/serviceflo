@@ -125,8 +125,8 @@ function ScreenPage() {
       <div
         ref={screenHostRef}
         className={
-          isEmbedded
-            ? "flex min-h-screen w-full items-center justify-center bg-[#05070b]"
+          isEmbedded || isFullscreen
+            ? "flex h-screen w-screen items-center justify-center overflow-hidden bg-[#05070b]"
             : "mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[2200px] items-center justify-center bg-[#05070b]"
         }
         style={{ backgroundColor }}
@@ -139,13 +139,19 @@ function ScreenPage() {
           className={
             isEmbedded
               ? "h-full w-full overflow-hidden"
-              : "w-full max-h-full overflow-hidden border border-white/10 shadow-2xl"
+              : isFullscreen
+                ? "overflow-hidden"
+                : "w-full max-h-full overflow-hidden border border-white/10 shadow-2xl"
           }
-          style={{ aspectRatio: toCssAspectRatio(aspectRatio) }}
+          style={
+            isEmbedded
+              ? { aspectRatio: toCssAspectRatio(aspectRatio) }
+              : displayFrameStyle(aspectRatio, isFullscreen ? "0px" : "1.5rem")
+          }
         >
           <div
             className={
-              isEmbedded
+              isEmbedded || isFullscreen
                 ? "flex h-full min-h-0 w-full flex-col"
                 : "mx-auto flex h-full min-h-0 max-w-[1800px] flex-col px-[clamp(0.75rem,1.6vw,2rem)] py-[clamp(0.75rem,1.6vw,2rem)]"
             }
@@ -153,7 +159,7 @@ function ScreenPage() {
             <div className="grid min-h-0 flex-1 gap-[clamp(0.75rem,1.5vw,2rem)]">
               <main
                 className={
-                  isEmbedded
+                  isEmbedded || isFullscreen
                     ? "flex min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(0,177,255,0.12),transparent_45%),rgba(255,255,255,0.03)] p-[clamp(0.85rem,1.7vw,2.5rem)]"
                     : "flex min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(0,177,255,0.12),transparent_45%),rgba(255,255,255,0.03)] p-[clamp(0.85rem,1.7vw,2.5rem)] shadow-2xl"
                 }
@@ -197,6 +203,15 @@ function ScreenPage() {
 function toCssAspectRatio(ratio: ScreenAspectRatio): string {
   const [w, h] = ratio.split(":");
   return `${w} / ${h}`;
+}
+
+function displayFrameStyle(ratio: ScreenAspectRatio, viewportInset: string) {
+  const [w, h] = ratio.split(":").map(Number);
+  return {
+    aspectRatio: `${w} / ${h}`,
+    maxHeight: `calc(100dvh - ${viewportInset})`,
+    width: `min(100%, calc((100dvh - ${viewportInset}) * ${w / h}))`,
+  };
 }
 
 function LiveBody({

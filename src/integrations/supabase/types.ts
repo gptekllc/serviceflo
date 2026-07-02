@@ -56,6 +56,65 @@ export type Database = {
           },
         ]
       }
+      program_assets: {
+        Row: {
+          alt: string
+          asset_type: string
+          created_at: string
+          file_name: string
+          file_size: number | null
+          fit: string
+          id: string
+          mime_type: string
+          public_url: string
+          slide_count: number | null
+          source_program_id: string | null
+          storage_path: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          alt?: string
+          asset_type: string
+          created_at?: string
+          file_name: string
+          file_size?: number | null
+          fit?: string
+          id?: string
+          mime_type: string
+          public_url: string
+          slide_count?: number | null
+          source_program_id?: string | null
+          storage_path: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          alt?: string
+          asset_type?: string
+          created_at?: string
+          file_name?: string
+          file_size?: number | null
+          fit?: string
+          id?: string
+          mime_type?: string
+          public_url?: string
+          slide_count?: number | null
+          source_program_id?: string | null
+          storage_path?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "program_assets_source_program_id_fkey"
+            columns: ["source_program_id"]
+            isOneToOne: false
+            referencedRelation: "programs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       program_items: {
         Row: {
           content: Json

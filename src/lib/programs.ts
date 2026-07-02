@@ -3,6 +3,7 @@ import type { Json } from "@/integrations/supabase/types";
 
 export type ItemStatus = "upcoming" | "live" | "completed";
 export type ItemType = "announcement" | "speaker" | "song" | "image";
+export type ProgramAssetType = "image" | "pptx";
 export type PresentationTarget = "audience" | "stage";
 export type PresentationTargetScope = PresentationTarget | "both";
 export type ScreenAspectRatio = "4:3" | "7:5" | "1:1" | "16:9" | "20:9";
@@ -83,6 +84,23 @@ export interface StageMessage {
   updatedAt: string;
 }
 
+export interface ProgramAsset {
+  id: string;
+  assetType: ProgramAssetType;
+  title: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: number | null;
+  storagePath: string;
+  publicUrl: string;
+  fit: ImageContent["fit"];
+  alt: string;
+  slideCount: number | null;
+  sourceProgramId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 type Row = {
   id: string;
   title: string;
@@ -116,6 +134,23 @@ type PresentationOutputRow = {
   target: PresentationTarget;
   item_id: string | null;
   slide_index?: number | null;
+  updated_at: string;
+};
+
+type ProgramAssetRow = {
+  id: string;
+  asset_type: ProgramAssetType;
+  title: string;
+  file_name: string;
+  mime_type: string;
+  file_size: number | null;
+  storage_path: string;
+  public_url: string;
+  fit: ImageContent["fit"];
+  alt: string;
+  slide_count: number | null;
+  source_program_id: string | null;
+  created_at: string;
   updated_at: string;
 };
 
@@ -157,6 +192,25 @@ function rowToPresentationOutput(r: PresentationOutputRow): PresentationOutput {
     target: r.target,
     itemId: r.item_id,
     slideIndex: r.slide_index ?? 0,
+    updatedAt: r.updated_at,
+  };
+}
+
+function rowToProgramAsset(r: ProgramAssetRow): ProgramAsset {
+  return {
+    id: r.id,
+    assetType: r.asset_type,
+    title: r.title,
+    fileName: r.file_name,
+    mimeType: r.mime_type,
+    fileSize: r.file_size,
+    storagePath: r.storage_path,
+    publicUrl: r.public_url,
+    fit: r.fit,
+    alt: r.alt,
+    slideCount: r.slide_count,
+    sourceProgramId: r.source_program_id,
+    createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
 }
@@ -279,7 +333,104 @@ export async function updateProgramAppearance(
   if (error) throw error;
 }
 
-export async function uploadProgramImage(programId: string, file: File): Promise<ImageContent> {
+async function createProgramAsset(input: {
+  assetType: ProgramAssetType;
+  title: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  storagePath: string;
+  publicUrl: string;
+  fit: ImageContent["fit"];
+  alt: string;
+  slideCount?: number | null;
+  sourceProgramId?: string | null;
+}): Promise<ProgramAsset> {
+  const { data, error } = await supabase
+    .from("program_assets")
+    .insert({
+      asset_type: input.assetType,
+      title: input.title,
+      file_name: input.fileName,
+      mime_type: input.mimeType,
+      file_size: input.fileSize,
+      storage_path: input.storagePath,
+      public_url: input.publicUrl,
+      fit: input.fit,
+      alt: input.alt,
+      slide_count: input.slideCount ?? null,
+      source_program_id: input.sourceProgramId ?? null,
+    })
+    .select("*")
+    .single();
+  if (error) throw error;
+  return rowToProgramAsset(data as ProgramAssetRow);
+}
+
+export function assetToImageContent(asset: ProgramAsset): ImageContent {
+  if (asset.assetType === "pptx") {
+    return {
+      kind: "pptx",
+      imageUrl: "",
+      pptxUrl: asset.publicUrl,
+      storagePath: asset.storagePath,
+      fileName: asset.fileName,
+      mimeType: asset.mimeType,
+      fit: asset.fit,
+      alt: asset.alt,
+      slideCount: asset.slideCount ?? undefined,
+    };
+  }
+
+  return {
+    kind: "image",
+    imageUrl: asset.publicUrl,
+    storagePath: asset.storagePath,
+    fileName: asset.fileName,
+    mimeType: asset.mimeType,
+    fit: asset.fit,
+    alt: asset.alt,
+  };
+}
+
+export function subscribeProgramAssets(cb: (assets: ProgramAsset[]) => void): () => void {
+  let current: ProgramAsset[] = [];
+  let cancelled = false;
+
+  const refresh = async () => {
+    const { data, error } = await supabase
+      .from("program_assets")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (cancelled) return;
+    if (error) {
+      console.error("[program_assets] load failed:", error);
+      cb([]);
+      return;
+    }
+    current = (data as ProgramAssetRow[]).map(rowToProgramAsset);
+    cb(current);
+  };
+  void refresh();
+
+  const channel = supabase
+    .channel("program_assets")
+    .on("postgres_changes", { event: "*", schema: "public", table: "program_assets" }, () => {
+      void refresh();
+    })
+    .subscribe();
+
+  return () => {
+    cancelled = true;
+    void supabase.removeChannel(channel);
+  };
+}
+
+export async function uploadProgramImage(
+  programId: string,
+  file: File,
+  options: { saveToLibrary?: boolean } = {},
+): Promise<ImageContent> {
   const ext =
     file.name
       .split(".")
@@ -299,7 +450,8 @@ export async function uploadProgramImage(programId: string, file: File): Promise
   if (error) throw error;
 
   const { data } = supabase.storage.from("program-images").getPublicUrl(storagePath);
-  return {
+  const content = {
+    kind: "image" as const,
     imageUrl: data.publicUrl,
     storagePath,
     fileName: file.name,
@@ -307,11 +459,29 @@ export async function uploadProgramImage(programId: string, file: File): Promise
     fit: "contain",
     alt: file.name.replace(/\.[^.]+$/, ""),
   };
+
+  if (options.saveToLibrary ?? true) {
+    await createProgramAsset({
+      assetType: "image",
+      title: content.alt || file.name,
+      fileName: file.name,
+      mimeType: file.type || "application/octet-stream",
+      fileSize: file.size,
+      storagePath,
+      publicUrl: data.publicUrl,
+      fit: content.fit,
+      alt: content.alt,
+      sourceProgramId: programId,
+    });
+  }
+
+  return content;
 }
 
 export async function uploadProgramPowerPoint(
   programId: string,
   file: File,
+  options: { saveToLibrary?: boolean } = {},
 ): Promise<ImageContent> {
   const slideCount = await countPowerPointSlides(file);
   const safeBase = file.name
@@ -334,7 +504,7 @@ export async function uploadProgramPowerPoint(
   if (error) throw error;
 
   const { data } = supabase.storage.from("program-images").getPublicUrl(storagePath);
-  return {
+  const content = {
     kind: "pptx",
     imageUrl: "",
     pptxUrl: data.publicUrl,
@@ -345,7 +515,26 @@ export async function uploadProgramPowerPoint(
     fit: "contain",
     alt: file.name.replace(/\.[^.]+$/, ""),
     slideCount,
-  };
+  } satisfies ImageContent;
+
+  if (options.saveToLibrary ?? true) {
+    await createProgramAsset({
+      assetType: "pptx",
+      title: content.alt || file.name,
+      fileName: file.name,
+      mimeType:
+        file.type || "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      fileSize: file.size,
+      storagePath,
+      publicUrl: data.publicUrl,
+      fit: content.fit,
+      alt: content.alt,
+      slideCount,
+      sourceProgramId: programId,
+    });
+  }
+
+  return content;
 }
 
 export async function countPowerPointSlides(input: Blob | ArrayBuffer): Promise<number> {
